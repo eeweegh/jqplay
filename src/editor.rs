@@ -50,6 +50,47 @@ impl LineEditor {
         self.cursor += s.chars().count();
     }
 
+    fn prev_char(&self) -> Option<char> {
+        self.cursor.checked_sub(1).and_then(|i| self.text.chars().nth(i))
+    }
+
+    fn next_char(&self) -> Option<char> {
+        self.text.chars().nth(self.cursor)
+    }
+
+    // Typed character with bracket/quote pairing: pairs on open, steps over a matching closer.
+    pub fn insert_char(&mut self, c: char, autopair: bool) {
+        let plain = c.encode_utf8(&mut [0; 4]).to_string();
+        if !autopair {
+            self.insert(&plain);
+            return;
+        }
+        let (prev, next) = (self.prev_char(), self.next_char());
+        let roomy = next.is_none_or(|n| n.is_whitespace() || matches!(n, ')' | ']' | '}'));
+        match (c, closer_for(c)) {
+            (')' | ']' | '}', _) if next == Some(c) => self.right(),
+            ('"', _) if next == Some('"') => self.right(),
+            ('"', _) if prev.is_some_and(|p| p.is_alphanumeric() || p == '_' || p == '\\') => {
+                self.insert(&plain);
+            }
+            (_, Some(close)) if roomy => {
+                self.insert(&format!("{c}{close}"));
+                self.left();
+            }
+            _ => self.insert(&plain),
+        }
+    }
+
+    // Backspace that removes an empty pair like (|) in one go.
+    pub fn backspace_pair(&mut self) {
+        let between_pair =
+            self.prev_char().and_then(closer_for).is_some_and(|close| self.next_char() == Some(close));
+        if between_pair {
+            self.delete();
+        }
+        self.backspace();
+    }
+
     pub fn backspace(&mut self) {
         if self.cursor > 0 {
             self.cursor -= 1;
@@ -124,6 +165,16 @@ impl LineEditor {
     }
 }
 
+fn closer_for(open: char) -> Option<char> {
+    match open {
+        '(' => Some(')'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        '"' => Some('"'),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,5 +229,53 @@ mod tests {
         let mut e = ed("abcd", 0);
         e.transpose();
         assert_eq!(e.text(), "abcd");
+    }
+
+    fn typed(text: &str, autopair: bool) -> LineEditor {
+        let mut e = LineEditor::default();
+        text.chars().for_each(|c| e.insert_char(c, autopair));
+        e
+    }
+
+    #[test]
+    fn openers_insert_pairs_with_cursor_inside() {
+        for (open, want) in [('(', "()"), ('[', "[]"), ('{', "{}"), ('"', "\"\"")] {
+            let e = typed(&open.to_string(), true);
+            assert_eq!((e.text(), e.cursor()), (want, 1), "{open}");
+        }
+    }
+
+    #[test]
+    fn no_pairing_before_a_word_or_when_disabled() {
+        let mut e = ed("foo", 0);
+        e.insert_char('(', true);
+        assert_eq!(e.text(), "(foo");
+        assert_eq!(typed("([\"", false).text(), "([\"");
+    }
+
+    #[test]
+    fn closers_step_over_instead_of_duplicating() {
+        assert_eq!(typed(".[0]", true).text(), ".[0]");
+        assert_eq!(typed("select(.a == \"x\")", true).text(), "select(.a == \"x\")");
+        assert_eq!(typed("{a: [1, (2)]}", true).text(), "{a: [1, (2)]}");
+        assert_eq!(typed("{a: [1, (2)]}", true).cursor(), 13);
+    }
+
+    #[test]
+    fn quote_after_word_or_backslash_is_single() {
+        assert_eq!(typed("\"abc\"", true).text(), "\"abc\"");
+        let mut e = ed("\"a\\", 3);
+        e.insert_char('"', true);
+        assert_eq!(e.text(), "\"a\\\"");
+    }
+
+    #[test]
+    fn backspace_removes_empty_pair_only() {
+        let mut e = typed("(", true);
+        e.backspace_pair();
+        assert_eq!(e.text(), "");
+        let mut e = typed("[1", true);
+        e.backspace_pair();
+        assert_eq!((e.text(), e.cursor()), ("[]", 1));
     }
 }

@@ -9,7 +9,7 @@ cat data.json | jqplay
 jqplay data.json --filter '.items[] | select(.active)'
 ```
 
-`jqplay --help` lists every key binding. Ctrl+Q exits and prints `jq '<filter>'`.
+`jqplay --help` lists every key binding. Enter (filter pane) or `q` (other panes) accepts and prints `jq '<filter>'`; Ctrl+C aborts.
 
 ## Layout of the code
 
@@ -20,7 +20,7 @@ jqplay data.json --filter '.items[] | select(.active)'
 | `app` | pure state machine: events in, jobs out (no I/O except history, reload, save) |
 | `ui`, `theme` | stateless ratatui rendering of `&mut App` |
 | `ansi` | SGR parser and the line-indexed `Document` that only parses visible rows |
-| `editor`, `completion`, `history` | filter line editing, Tab completion, history file |
+| `editor`, `completion`, `history` | filter line editing, path completion, history file |
 | `input`, `terminal`, `run` | stdin/tty handling, terminal modes, the event loop |
 
 ## Development

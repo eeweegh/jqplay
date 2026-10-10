@@ -61,3 +61,11 @@ pub fn render(app: &mut App, width: u16, height: u16) -> String {
     terminal.draw(|f| jqplay::ui::draw(f, app)).unwrap();
     terminal.backend().to_string()
 }
+
+pub fn focus_next(app: &mut App) {
+    press(app, KeyCode::Tab, KeyModifiers::NONE);
+}
+
+pub fn focus_prev(app: &mut App) {
+    press(app, KeyCode::BackTab, KeyModifiers::SHIFT);
+}

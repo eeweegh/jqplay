@@ -118,6 +118,8 @@ pub struct App {
     pub json_pane: Pane,
     pub results_pane: Pane,
     pub json_valid: bool,
+    pub autopair: bool,
+    pub autocomplete: bool,
     pub status_message: String,
     pub rects: Rects,
     history: FilterHistory,
@@ -165,7 +167,7 @@ enum Edited {
 }
 
 // Editing keys shared by the filter line and the save prompt.
-fn apply_edit_key(ed: &mut LineEditor, key: &KeyEvent) -> Edited {
+fn apply_edit_key(ed: &mut LineEditor, key: &KeyEvent, autopair: bool) -> Edited {
     if let Some(c) = ctrl_char(key) {
         return match c {
             'a' => {
@@ -204,12 +206,16 @@ fn apply_edit_key(ed: &mut LineEditor, key: &KeyEvent) -> Edited {
         };
     }
     if let Some(c) = is_plain_char(key) {
-        ed.insert(c.encode_utf8(&mut [0; 4]));
+        ed.insert_char(c, autopair);
         return Edited::Changed;
     }
     match key.code {
         KeyCode::Backspace => {
-            ed.backspace();
+            if autopair {
+                ed.backspace_pair();
+            } else {
+                ed.backspace();
+            }
             Edited::Changed
         }
         KeyCode::Delete => {
@@ -255,6 +261,8 @@ impl App {
             json_pane: Pane::default(),
             results_pane: Pane::default(),
             json_valid: true,
+            autopair: settings.autopair,
+            autocomplete: settings.autocomplete,
             status_message: String::new(),
             rects: Rects::default(),
             history,
@@ -531,10 +539,25 @@ impl App {
         self.completion = Completion { open: true, candidates, filtered, selected: 0, token_start: start };
     }
 
+    // Silent variant for typing: only for path tokens, only with loaded paths, never sets a message.
+    fn auto_open_completion(&mut self) {
+        let Some((generation, slurp, Ok(candidates))) = &self.paths else { return };
+        if (*generation, *slurp) != (self.generation, self.options.slurp) {
+            return;
+        }
+        let (start, token) = find_current_token(self.editor.text(), self.editor.cursor());
+        let filtered = match_paths(candidates, &token, CANDIDATE_LIMIT);
+        if !token.starts_with('.') || filtered.is_empty() || filtered == [token] {
+            return;
+        }
+        let candidates = candidates.clone();
+        self.completion = Completion { open: true, candidates, filtered, selected: 0, token_start: start };
+    }
+
     fn refresh_completion(&mut self) {
         let (start, token) = find_current_token(self.editor.text(), self.editor.cursor());
         let filtered = match_paths(&self.completion.candidates, &token, CANDIDATE_LIMIT);
-        if filtered.is_empty() {
+        if filtered.is_empty() || filtered == [token] {
             return self.completion.close();
         }
         self.completion.token_start = start;
@@ -639,7 +662,7 @@ impl App {
             KeyCode::Esc => self.prompt = None,
             _ => {
                 if let Some(p) = &mut self.prompt {
-                    apply_edit_key(&mut p.editor, key);
+                    apply_edit_key(&mut p.editor, key, false);
                 }
             }
         }
@@ -669,24 +692,33 @@ impl App {
                 self.on_filter_change();
                 return true;
             }
-            KeyCode::Enter => return true,
+            KeyCode::Enter => {
+                self.accept();
+                return true;
+            }
             _ => {}
         }
         if open && is_plain_char(key).is_some_and(|c| !is_token_char(c)) {
             self.completion.close();
         }
-        match apply_edit_key(&mut self.editor, key) {
+        match apply_edit_key(&mut self.editor, key, self.autopair) {
             Edited::No => return false,
             Edited::Moved => {}
             Edited::Changed => self.on_filter_change(),
         }
         if self.completion.open {
             self.refresh_completion();
+        } else if self.autocomplete && is_plain_char(key).is_some_and(is_token_char) {
+            self.auto_open_completion();
         }
         true
     }
 
-    // Single-key option toggles; only reachable from the JSON and Result panes.
+    fn accept(&mut self) {
+        self.outcome = Some(Outcome::Clean(self.editor.text().to_string()));
+    }
+
+    // Single-key option toggles (plus `q` to accept); only reachable from the JSON and Result panes.
     fn option_key(&mut self, key: &KeyEvent) -> bool {
         match is_plain_char(key) {
             Some('r') => self.toggle(|o| o.raw = !o.raw),
@@ -694,6 +726,7 @@ impl App {
             Some('S') => self.toggle(|o| o.sort_keys = !o.sort_keys),
             Some('s') => self.toggle(|o| o.slurp = !o.slurp),
             Some('C') => self.toggle(|o| o.color = !o.color),
+            Some('q') => self.accept(),
             _ => return false,
         }
         true
@@ -703,9 +736,8 @@ impl App {
         if let Some(c) = ctrl_char(key) {
             match c {
                 'c' => self.outcome = Some(Outcome::Abort),
-                'q' => self.outcome = Some(Outcome::Clean(self.editor.text().to_string())),
-                'n' => self.set_focus(self.focus.step(1)),
-                'b' => self.set_focus(self.focus.step(-1)),
+                'q' => self.accept(),
+                ' ' if self.focus == Focus::Filter && !self.completion.open => self.open_completion(),
                 'y' | 's' => {
                     self.completion.close();
                     self.open_save_prompt();
@@ -719,15 +751,13 @@ impl App {
             return;
         }
         match key.code {
-            KeyCode::Tab if self.focus == Focus::Filter => {
+            KeyCode::Tab | KeyCode::BackTab => {
+                let delta = if key.code == KeyCode::Tab { 1 } else { -1 };
                 if self.completion.open {
-                    self.completion.step(1);
+                    self.completion.step(delta);
                 } else {
-                    self.open_completion();
+                    self.set_focus(self.focus.step(delta));
                 }
-            }
-            KeyCode::BackTab if self.focus == Focus::Filter && self.completion.open => {
-                self.completion.step(-1);
             }
             KeyCode::Esc => {
                 self.completion.close();

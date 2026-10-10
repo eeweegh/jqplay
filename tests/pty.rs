@@ -68,7 +68,6 @@ fn tab_opens_path_completion() {
     let mut s = spawn(&["tests/data/small.json"], None);
     pause();
     s.send(".").unwrap();
-    s.send("\t").unwrap();
     s.expect("jq paths").unwrap();
     s.send(CTRL_C).unwrap();
 }
@@ -80,4 +79,45 @@ fn ctrl_s_opens_save_prompt_in_a_real_terminal() {
     s.send("\x13").unwrap();
     s.expect("save results to path").unwrap();
     s.send(CTRL_C).unwrap();
+}
+
+#[test]
+fn enter_accepts_and_prints_filter() {
+    let mut s = spawn(&["--filter", ".a", "tests/data/small.json"], None);
+    pause();
+    s.send("\r").unwrap();
+    s.expect("jq '.a'").unwrap();
+    s.expect(Eof).unwrap();
+}
+
+#[test]
+fn q_in_a_view_pane_accepts() {
+    let mut s = spawn(&["--filter", ".a", "tests/data/small.json"], None);
+    pause();
+    s.send("\t").unwrap();
+    s.send("q").unwrap();
+    s.expect("jq '.a'").unwrap();
+    s.expect(Eof).unwrap();
+}
+
+#[test]
+fn ctrl_space_opens_completion_manually() {
+    let mut s = spawn(&["tests/data/small.json"], None);
+    pause();
+    s.send("\x00").unwrap();
+    s.expect("jq paths").unwrap();
+    s.send(CTRL_C).unwrap();
+}
+
+#[test]
+fn enter_on_popup_selection_does_not_quit() {
+    let mut s = spawn(&["tests/data/small.json"], None);
+    pause();
+    s.send(".").unwrap();
+    s.expect("jq paths").unwrap();
+    s.send("\r").unwrap();
+    pause();
+    s.send("\x03").unwrap();
+    let rest = s.expect(Eof).unwrap();
+    assert!(!String::from_utf8_lossy(rest.before()).contains("jq '"));
 }

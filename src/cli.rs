@@ -17,27 +17,31 @@ Layout:
   +------------------------------+---------------------------+
   Each pane scrolls independently (arrows, PageUp/PageDown, Home/End, mouse
   wheel). JSON Input and Result are view-only; load JSON via a file argument,
-  stdin, or Ctrl+F. On a clean exit (Ctrl+Q) the current filter is printed to
+  stdin, or Ctrl+F. On accepting (Enter in the filter pane, q elsewhere) the current filter is printed to
   stdout as: jq '<filter>'
 
 Global keybindings:
-  Ctrl+N / Ctrl+B   switch focus between panes (next / previous)
-  Ctrl+Q            clean exit: code 0, prints the current jq filter
-  Ctrl+C            hard exit: code 1, prints nothing
+  Tab / Shift+Tab   switch focus between panes (next / previous)
+  Enter / q         accept and exit: code 0, prints the current jq filter
+                    (Enter in the filter pane, q in the JSON/Result panes;
+                    Ctrl+Q also works anywhere)
+  Ctrl+C            abort: code 1, prints nothing
   Ctrl+S            save the Result text to a path (any pane); Ctrl+Y also
                     does this from the JSON or Result pane
   Esc               dismiss a status message / close the completion popup
   Ctrl+F            reload the JSON from its source file (not for stdin)
   Up / Down         (filter pane, popup closed) recall previous/next filter
 
-Option toggles (JSON Input or Result pane only, so they never clash with typing):
+Single keys (JSON Input or Result pane only, so they never clash with typing):
   r                 raw output (-r)            c   compact output (-c)
   S                 sort keys (-S)             s   slurp (-s)
   C                 syntax coloring
 
 jq-key completion (filter pane only):
-  Tab / Shift+Tab   open the popup / cycle through matches
-  Up / Down         move the selection; Enter accepts, Esc closes
+  The popup opens by itself while you type a path token (starting with '.').
+  Ctrl+Space      open it manually
+  Tab / Shift+Tab step through the matches while it is open (else switch focus)
+  Up / Down       move the selection; Enter accepts it, Esc closes
   Typing narrows the list; a boundary character (space, |, (, ...) closes it.
 
 Readline editing (filter pane only; overrides Ctrl+Y save there; use Ctrl+S):
@@ -47,7 +51,7 @@ Readline editing (filter pane only; overrides Ctrl+Y save there; use Ctrl+S):
   Ctrl+T            transpose two characters
 
 Config file (TOML, optional): ~/.config/jqplay/config.toml with keys theme,
-raw, compact, sort_keys, slurp, color, history_file, mouse. Flags override it.
+raw, compact, sort_keys, slurp, color, history_file, mouse, autopair (auto-close\nbrackets and quotes in the filter line, default true). Flags override it.
 
 Examples:
   jqplay data.json

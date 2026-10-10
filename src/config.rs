@@ -20,6 +20,8 @@ pub struct Config {
     pub color: Option<bool>,
     pub history_file: Option<String>,
     pub mouse: Option<bool>,
+    pub autopair: Option<bool>,
+    pub autocomplete: Option<bool>,
 }
 
 impl Config {
@@ -48,6 +50,8 @@ pub struct Settings {
     pub theme: ThemeName,
     pub history_file: Option<PathBuf>,
     pub mouse: bool,
+    pub autopair: bool,
+    pub autocomplete: bool,
     pub filter: Option<String>,
     pub file: Option<PathBuf>,
 }
@@ -79,6 +83,8 @@ impl Settings {
             theme: cli.theme.or(config.theme).unwrap_or_default(),
             history_file: (!history.is_empty()).then(|| expand_tilde(&history)),
             mouse: !cli.no_mouse && config.mouse.unwrap_or(true),
+            autopair: config.autopair.unwrap_or(true),
+            autocomplete: config.autocomplete.unwrap_or(true),
             filter: cli.filter.clone(),
             file: cli.file.clone(),
         }
@@ -121,6 +127,16 @@ mod tests {
         let s = Settings::resolve(&cli(&["--color"]), &Config::default())
             .with_input_size(LARGE_INPUT_THRESHOLD + 1);
         assert!(s.options.color);
+    }
+
+    #[test]
+    fn autopair_defaults_on_and_can_be_disabled() {
+        assert!(Settings::resolve(&cli(&[]), &Config::default()).autopair);
+        let cfg: Config = toml::from_str("autopair = false").unwrap();
+        assert!(!Settings::resolve(&cli(&[]), &cfg).autopair);
+        assert!(Settings::resolve(&cli(&[]), &Config::default()).autocomplete);
+        let cfg: Config = toml::from_str("autocomplete = false").unwrap();
+        assert!(!Settings::resolve(&cli(&[]), &cfg).autocomplete);
     }
 
     #[test]

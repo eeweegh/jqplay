@@ -1,8 +1,8 @@
 mod support;
 
-use jqplay::app::Outcome;
+use jqplay::app::{Focus, Outcome};
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
-use support::{SAMPLE, app_with, ctrl, flush_debounce, press, render, type_text};
+use support::{SAMPLE, app_with, ctrl, flush_debounce, focus_next, focus_prev, press, render, type_text};
 
 #[test]
 fn startup_with_filter_shows_input_and_result() {
@@ -40,10 +40,9 @@ fn jq_error_is_shown_in_result_pane() {
 }
 
 #[test]
-fn tab_opens_completion_and_enter_accepts() {
+fn popup_opens_while_typing_and_enter_accepts() {
     let mut app = app_with(Some(SAMPLE), &[]);
     type_text(&mut app, ".us");
-    press(&mut app, KeyCode::Tab, KeyModifiers::NONE);
     assert!(app.completion.open);
     insta::assert_snapshot!(render(&mut app, 70, 14));
     press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
@@ -55,7 +54,7 @@ fn tab_opens_completion_and_enter_accepts() {
 fn boundary_char_closes_popup_and_is_inserted() {
     let mut app = app_with(Some(SAMPLE), &[]);
     type_text(&mut app, ".us");
-    press(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+    assert!(app.completion.open);
     type_text(&mut app, " ");
     assert!(!app.completion.open);
     assert_eq!(app.editor.text(), ".us ");
@@ -65,7 +64,7 @@ fn boundary_char_closes_popup_and_is_inserted() {
 fn toggles_flip_status_and_output() {
     let mut app = app_with(Some(SAMPLE), &["--filter", ".users[0].name"]);
     assert!(render(&mut app, 100, 12).lines().any(|l| l.contains("\"ann\"")));
-    ctrl(&mut app, 'n');
+    focus_next(&mut app);
     type_text(&mut app, "r");
     let screen = render(&mut app, 100, 12);
     assert!(screen.lines().any(|l| l.contains("│ann")));
@@ -91,13 +90,13 @@ fn single_key_toggles_only_outside_filter_pane() {
     type_text(&mut app, "rcsSC");
     assert_eq!(app.options, jqplay::jq::Options::default());
     assert_eq!(app.editor.text(), "rcsSC");
-    ctrl(&mut app, 'n');
+    focus_next(&mut app);
     type_text(&mut app, "rcsSC");
     assert_eq!(
         app.options,
         jqplay::jq::Options { raw: true, compact: true, sort_keys: true, slurp: true, color: true }
     );
-    ctrl(&mut app, 'n');
+    focus_next(&mut app);
     type_text(&mut app, "r");
     assert!(!app.options.raw);
 }
@@ -105,7 +104,7 @@ fn single_key_toggles_only_outside_filter_pane() {
 #[test]
 fn old_ctrl_toggles_are_gone() {
     let mut app = app_with(Some(SAMPLE), &[]);
-    ctrl(&mut app, 'n');
+    focus_next(&mut app);
     for c in ['x', 'p', 'k', 'u', 'g'] {
         ctrl(&mut app, c);
     }
@@ -127,7 +126,7 @@ fn save_writes_plain_result_text() {
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("out/result.txt");
     let mut app = app_with(Some(SAMPLE), &["--filter", ".count"]);
-    ctrl(&mut app, 'n');
+    focus_next(&mut app);
     ctrl(&mut app, 'y');
     assert!(app.prompt.is_some());
     for _ in 0..20 {
@@ -141,7 +140,7 @@ fn save_writes_plain_result_text() {
 #[test]
 fn nothing_to_save_without_results() {
     let mut app = app_with(Some(SAMPLE), &[]);
-    ctrl(&mut app, 'n');
+    focus_next(&mut app);
     ctrl(&mut app, 'y');
     assert!(app.prompt.is_none());
     assert_eq!(app.status_message, "nothing to save (no valid results)");
@@ -170,8 +169,8 @@ fn reload_rereads_the_source_file() {
 fn end_key_scrolls_to_the_true_bottom() {
     let json = format!("[{}]", (0..200).map(|i| i.to_string()).collect::<Vec<_>>().join(","));
     let mut app = app_with(Some(&json), &["--filter", ".[]"]);
-    ctrl(&mut app, 'b');
-    ctrl(&mut app, 'b');
+    focus_prev(&mut app);
+    focus_prev(&mut app);
     press(&mut app, KeyCode::End, KeyModifiers::NONE);
     assert!(render(&mut app, 100, 12).contains("199"));
 }
@@ -179,14 +178,14 @@ fn end_key_scrolls_to_the_true_bottom() {
 #[test]
 fn esc_dismisses_status_message_and_popup() {
     let mut app = app_with(Some(SAMPLE), &[]);
-    ctrl(&mut app, 'n');
+    focus_next(&mut app);
     ctrl(&mut app, 'y');
     assert!(!app.status_message.is_empty());
     press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
     assert!(app.status_message.is_empty());
-    ctrl(&mut app, 'b');
+    focus_prev(&mut app);
     type_text(&mut app, ".us");
-    press(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+    assert!(app.completion.open);
     app.status_message = "stale".into();
     press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
     assert!(!app.completion.open && app.status_message.is_empty());
@@ -216,4 +215,110 @@ fn ctrl_s_saves_from_the_filter_pane() {
     press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "2\n");
     assert!(app.status_message.starts_with("saved to"));
+}
+
+#[test]
+fn filter_line_autocloses_and_steps_over() {
+    let mut app = app_with(Some(SAMPLE), &[]);
+    type_text(&mut app, ".users[");
+    assert_eq!((app.editor.text(), app.editor.cursor()), (".users[]", 7));
+    type_text(&mut app, "]");
+    assert_eq!((app.editor.text(), app.editor.cursor()), (".users[]", 8));
+    type_text(&mut app, " | select(.name == \"ann\")");
+    assert_eq!(app.editor.text(), ".users[] | select(.name == \"ann\")");
+}
+
+#[test]
+fn completion_still_opens_next_to_paired_brackets() {
+    let mut app = app_with(Some(SAMPLE), &[]);
+    type_text(&mut app, "(.us");
+    assert_eq!(app.editor.text(), "(.us)");
+    assert!(app.completion.open);
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.editor.text(), "(.users)");
+}
+
+#[test]
+fn enter_in_filter_and_q_in_view_panes_accept() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".count"]);
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.outcome(), Some(&Outcome::Clean(".count".into())));
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".count"]);
+    type_text(&mut app, "q");
+    assert_eq!(app.outcome(), None);
+    assert_eq!(app.editor.text(), ".countq");
+    focus_next(&mut app);
+    type_text(&mut app, "q");
+    assert_eq!(app.outcome(), Some(&Outcome::Clean(".countq".into())));
+}
+
+#[test]
+fn enter_with_popup_open_accepts_the_suggestion_not_the_filter() {
+    let mut app = app_with(Some(SAMPLE), &[]);
+    type_text(&mut app, ".us");
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.outcome(), None);
+    assert_eq!(app.editor.text(), ".users");
+}
+
+#[test]
+fn tab_cycles_focus_and_shift_tab_goes_back() {
+    let mut app = app_with(Some(SAMPLE), &[]);
+    assert_eq!(app.focus, Focus::Filter);
+    focus_next(&mut app);
+    assert_eq!(app.focus, Focus::Json);
+    focus_next(&mut app);
+    assert_eq!(app.focus, Focus::Results);
+    focus_next(&mut app);
+    assert_eq!(app.focus, Focus::Filter);
+    focus_prev(&mut app);
+    assert_eq!(app.focus, Focus::Results);
+}
+
+#[test]
+fn tab_steps_through_matches_while_popup_is_open() {
+    let mut app = app_with(Some(SAMPLE), &[]);
+    type_text(&mut app, ".users");
+    assert!(app.completion.open);
+    let first = app.completion.selected;
+    focus_next(&mut app);
+    assert_eq!(app.focus, Focus::Filter);
+    assert_eq!(app.completion.selected, first + 1);
+    focus_prev(&mut app);
+    assert_eq!(app.completion.selected, first);
+}
+
+#[test]
+fn ctrl_space_opens_popup_when_autocomplete_is_off() {
+    let mut app = app_with(Some(SAMPLE), &[]);
+    app.autocomplete = false;
+    type_text(&mut app, ".us");
+    assert!(!app.completion.open);
+    ctrl(&mut app, ' ');
+    assert!(app.completion.open);
+}
+
+#[test]
+fn autopopup_skips_strings_and_exact_matches() {
+    let mut app = app_with(Some(SAMPLE), &[]);
+    type_text(&mut app, "select(.name == \"a");
+    assert!(!app.completion.open);
+    let mut app = app_with(Some(SAMPLE), &[]);
+    type_text(&mut app, ".count");
+    assert!(!app.completion.open);
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.outcome(), Some(&Outcome::Clean(".count".into())));
+}
+
+#[test]
+fn enter_with_popup_open_never_exits_even_if_selection_equals_token() {
+    let mut app = app_with(Some(SAMPLE), &[]);
+    type_text(&mut app, ".users");
+    assert!(app.completion.open);
+    assert_eq!(app.completion.choice(), Some(".users"));
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.outcome(), None);
+    assert!(!app.completion.open);
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.outcome(), Some(&Outcome::Clean(".users".into())));
 }

@@ -8,7 +8,7 @@ use ratatui::widgets::{
     Block, BorderType, Clear, List, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 
-const HINTS: &str = "Tab=complete ^N/^B=focus ^Q=quit ^S=save ^F=reload Esc=dismiss";
+const HINTS: &str = "Tab=focus ^Space=complete Enter=accept ^C=abort ^S=save ^F=reload Esc=dismiss";
 
 pub fn filter_height(rows: u16) -> u16 {
     (rows / 4).min(12).checked_div(2).unwrap_or(0).max(3)
