@@ -1,0 +1,24 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install jq
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get install -y jq; else brew list jq >/dev/null 2>&1 || brew install jq; fi
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --release --locked
