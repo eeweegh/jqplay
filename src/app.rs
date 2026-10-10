@@ -617,8 +617,14 @@ impl App {
                     return;
                 }
             }
-            Focus::Json => self.json_pane.key(key.code),
-            Focus::Results => self.results_pane.key(key.code),
+            Focus::Json | Focus::Results => {
+                if self.option_key(key) {
+                    return;
+                }
+                let pane =
+                    if self.focus == Focus::Json { &mut self.json_pane } else { &mut self.results_pane };
+                pane.key(key.code);
+            }
         }
         self.global_key(key);
     }
@@ -680,6 +686,19 @@ impl App {
         true
     }
 
+    // Single-key option toggles; only reachable from the JSON and Result panes.
+    fn option_key(&mut self, key: &KeyEvent) -> bool {
+        match is_plain_char(key) {
+            Some('r') => self.toggle(|o| o.raw = !o.raw),
+            Some('c') => self.toggle(|o| o.compact = !o.compact),
+            Some('S') => self.toggle(|o| o.sort_keys = !o.sort_keys),
+            Some('s') => self.toggle(|o| o.slurp = !o.slurp),
+            Some('C') => self.toggle(|o| o.color = !o.color),
+            _ => return false,
+        }
+        true
+    }
+
     fn global_key(&mut self, key: &KeyEvent) {
         if let Some(c) = ctrl_char(key) {
             match c {
@@ -687,7 +706,7 @@ impl App {
                 'q' => self.outcome = Some(Outcome::Clean(self.editor.text().to_string())),
                 'n' => self.set_focus(self.focus.step(1)),
                 'b' => self.set_focus(self.focus.step(-1)),
-                'y' => {
+                'y' | 's' => {
                     self.completion.close();
                     self.open_save_prompt();
                 }
@@ -695,11 +714,6 @@ impl App {
                     self.completion.close();
                     self.reload_source();
                 }
-                'x' => self.toggle(|o| o.raw = !o.raw),
-                'p' => self.toggle(|o| o.compact = !o.compact),
-                'k' => self.toggle(|o| o.sort_keys = !o.sort_keys),
-                'u' => self.toggle(|o| o.slurp = !o.slurp),
-                'g' => self.toggle(|o| o.color = !o.color),
                 _ => {}
             }
             return;
@@ -715,7 +729,10 @@ impl App {
             KeyCode::BackTab if self.focus == Focus::Filter && self.completion.open => {
                 self.completion.step(-1);
             }
-            KeyCode::Esc => self.completion.close(),
+            KeyCode::Esc => {
+                self.completion.close();
+                self.status_message.clear();
+            }
             _ => {}
         }
     }

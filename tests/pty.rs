@@ -72,3 +72,12 @@ fn tab_opens_path_completion() {
     s.expect("jq paths").unwrap();
     s.send(CTRL_C).unwrap();
 }
+
+#[test]
+fn ctrl_s_opens_save_prompt_in_a_real_terminal() {
+    let mut s = spawn(&["--filter", ".a", "tests/data/small.json"], None);
+    pause();
+    s.send("\x13").unwrap();
+    s.expect("save results to path").unwrap();
+    s.send(CTRL_C).unwrap();
+}

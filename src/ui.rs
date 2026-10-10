@@ -8,7 +8,7 @@ use ratatui::widgets::{
     Block, BorderType, Clear, List, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 
-const HINTS: &str = "Tab=complete ^N/^B=focus ^Q=quit ^Y=save results ^F=reload";
+const HINTS: &str = "Tab=complete ^N/^B=focus ^Q=quit ^S=save ^F=reload Esc=dismiss";
 
 pub fn filter_height(rows: u16) -> u16 {
     (rows / 4).min(12).checked_div(2).unwrap_or(0).max(3)
@@ -39,7 +39,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         (app.theme, block("JSON Input", json_focus, app), block("Result", results_focus, app));
     draw_pane(frame, json_area, json_block, &mut app.json_pane, theme.text, theme.error);
     draw_pane(frame, results_area, results_block, &mut app.results_pane, theme.text, theme.error);
-    frame.render_widget(status_line(app), status_area);
+    frame.render_widget(status_line(app, status_area.width), status_area);
 
     if app.completion.open {
         draw_completion(frame, app, filter_area);
@@ -95,25 +95,35 @@ fn draw_pane(
 }
 
 fn option_span(app: &App, label: &str, key: char, on: bool) -> Span<'static> {
-    Span::styled(format!("{label} [^{key}]"), if on { app.theme.option_on } else { app.theme.option_off })
+    Span::styled(format!("{label} [{key}]"), if on { app.theme.option_on } else { app.theme.option_off })
 }
 
-fn status_line(app: &App) -> Line<'static> {
+// One line, capped at a third of the bar so the option labels and hints stay visible.
+fn flatten_message(msg: &str, width: u16) -> String {
+    let flat = msg.split_whitespace().collect::<Vec<_>>().join(" ");
+    let max = usize::from(width / 3).max(10);
+    if flat.chars().count() <= max {
+        return flat;
+    }
+    flat.chars().take(max - 1).chain(std::iter::once('…')).collect()
+}
+
+fn status_line(app: &App, width: u16) -> Line<'static> {
     let Options { raw, compact, sort_keys, slurp, color } = app.options;
     let mut spans = vec![
         Span::raw(" "),
         Span::styled("● ", if app.working() { app.theme.working } else { app.theme.idle }),
     ];
     if !app.status_message.is_empty() {
-        spans.push(Span::raw(format!("{} | ", app.status_message)));
+        spans.push(Span::raw(format!("{} | ", flatten_message(&app.status_message, width))));
     }
     spans.push(Span::raw(format!("json:{}  ", if app.json_valid { "valid" } else { "INVALID" })));
     for (i, (label, key, on)) in [
-        ("raw", 'X', raw),
-        ("compact", 'P', compact),
-        ("sort", 'K', sort_keys),
-        ("slurp", 'U', slurp),
-        ("color", 'G', color),
+        ("raw", 'r', raw),
+        ("compact", 'c', compact),
+        ("sort", 'S', sort_keys),
+        ("slurp", 's', slurp),
+        ("color", 'C', color),
     ]
     .into_iter()
     .enumerate()

@@ -24,21 +24,23 @@ Global keybindings:
   Ctrl+N / Ctrl+B   switch focus between panes (next / previous)
   Ctrl+Q            clean exit: code 0, prints the current jq filter
   Ctrl+C            hard exit: code 1, prints nothing
-  Ctrl+Y            (JSON or Result pane) save the Result text to a path
+  Ctrl+S            save the Result text to a path (any pane); Ctrl+Y also
+                    does this from the JSON or Result pane
+  Esc               dismiss a status message / close the completion popup
   Ctrl+F            reload the JSON from its source file (not for stdin)
-  Ctrl+X            toggle raw output (-r)
-  Ctrl+P            toggle compact output (-c)
-  Ctrl+K            toggle sort-keys output (-S)
-  Ctrl+U            toggle slurp (-s)
-  Ctrl+G            toggle syntax coloring
   Up / Down         (filter pane, popup closed) recall previous/next filter
+
+Option toggles (JSON Input or Result pane only, so they never clash with typing):
+  r                 raw output (-r)            c   compact output (-c)
+  S                 sort keys (-S)             s   slurp (-s)
+  C                 syntax coloring
 
 jq-key completion (filter pane only):
   Tab / Shift+Tab   open the popup / cycle through matches
   Up / Down         move the selection; Enter accepts, Esc closes
   Typing narrows the list; a boundary character (space, |, (, ...) closes it.
 
-Readline editing (filter pane only; takes priority over the Ctrl+K/U/Y above):
+Readline editing (filter pane only; overrides Ctrl+Y save there; use Ctrl+S):
   Ctrl+A / Ctrl+E   start / end of line      Ctrl+K   kill to end of line
   Ctrl+D            delete char under cursor Ctrl+U   kill to start of line
   Ctrl+W            kill previous word       Ctrl+Y   yank last kill
