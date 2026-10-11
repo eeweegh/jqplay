@@ -591,11 +591,10 @@ impl App {
         if self.focus != Focus::Filter && self.prompt.is_none() {
             return;
         }
-        let line = text.replace(['\r', '\n'], " ");
         if let Some(p) = &mut self.prompt {
-            p.editor.insert(&line);
+            p.editor.insert(&text.replace(['\r', '\n'], " "));
         } else {
-            self.editor.insert(&line);
+            self.editor.insert(&text.replace("\r\n", "\n").replace('\r', "\n"));
             self.on_filter_change();
             if self.completion.open {
                 self.refresh_completion();
@@ -670,6 +669,15 @@ impl App {
 
     // Returns true when the filter line consumed the key.
     fn filter_key(&mut self, key: &KeyEvent) -> bool {
+        let newline = (key.code == KeyCode::Enter
+            && key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SHIFT))
+            || ctrl_char(key) == Some('j');
+        if newline {
+            self.editor.insert_newline();
+            self.completion.close();
+            self.on_filter_change();
+            return true;
+        }
         let open = self.completion.open;
         match key.code {
             KeyCode::Up | KeyCode::Down if open => {
@@ -681,11 +689,12 @@ impl App {
                 return true;
             }
             KeyCode::Up | KeyCode::Down => {
-                let recalled = if key.code == KeyCode::Up {
-                    self.history.recall_up(self.editor.text())
-                } else {
-                    self.history.recall_down()
-                };
+                let up = key.code == KeyCode::Up;
+                if (up && self.editor.up()) || (!up && self.editor.down()) {
+                    return true;
+                }
+                let recalled =
+                    if up { self.history.recall_up(self.editor.text()) } else { self.history.recall_down() };
                 if let Some(text) = recalled {
                     self.editor.set_text(&text);
                 }

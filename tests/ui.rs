@@ -322,3 +322,93 @@ fn enter_with_popup_open_never_exits_even_if_selection_equals_token() {
     press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
     assert_eq!(app.outcome(), Some(&Outcome::Clean(".users".into())));
 }
+
+fn filter_rows(screen: &str) -> usize {
+    screen.lines().position(|l| l.trim_start_matches('"').starts_with('╰')).map_or(0, |i| i + 1)
+}
+
+fn newline(app: &mut jqplay::app::App, how: usize) {
+    match how {
+        0 => ctrl(app, 'j'),
+        1 => press(app, KeyCode::Enter, KeyModifiers::ALT),
+        _ => press(app, KeyCode::Enter, KeyModifiers::SHIFT),
+    }
+}
+
+#[test]
+fn every_newline_key_adds_a_line_and_the_pane_grows_then_shrinks() {
+    for how in 0..3 {
+        let mut app = app_with(Some(SAMPLE), &[]);
+        assert_eq!(filter_rows(&render(&mut app, 80, 24)), 3);
+        type_text(&mut app, ".users[]");
+        newline(&mut app, how);
+        type_text(&mut app, "| .name");
+        assert_eq!(app.outcome(), None);
+        assert_eq!(app.editor.text(), ".users[]\n| .name");
+        assert_eq!(filter_rows(&render(&mut app, 80, 24)), 4);
+        press(&mut app, KeyCode::Home, KeyModifiers::NONE);
+        press(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(app.editor.text(), ".users[]| .name");
+        assert_eq!(filter_rows(&render(&mut app, 80, 24)), 3);
+    }
+}
+
+#[test]
+fn three_line_filter_renders_with_continuation_indent() {
+    let mut app = app_with(Some(SAMPLE), &[]);
+    type_text(&mut app, ".users[]");
+    ctrl(&mut app, 'j');
+    type_text(&mut app, "| select(.age > 30)");
+    ctrl(&mut app, 'j');
+    type_text(&mut app, "| .name");
+    press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    flush_debounce(&mut app);
+    insta::assert_snapshot!(render(&mut app, 70, 16));
+}
+
+#[test]
+fn multi_line_filter_runs_in_jq() {
+    let mut app = app_with(Some(SAMPLE), &[]);
+    type_text(&mut app, ".users[]");
+    ctrl(&mut app, 'j');
+    type_text(&mut app, "| .name");
+    flush_debounce(&mut app);
+    let screen = render(&mut app, 100, 16);
+    assert!(screen.lines().any(|l| l.contains("\"ann\"")) && screen.contains("\"bob\""));
+}
+
+#[test]
+fn up_and_down_move_between_lines_before_touching_history() {
+    let mut app = app_with(Some(SAMPLE), &[]);
+    type_text(&mut app, "ab");
+    ctrl(&mut app, 'j');
+    type_text(&mut app, "cd");
+    press(&mut app, KeyCode::Up, KeyModifiers::NONE);
+    assert_eq!(app.editor.row_col(), (0, 2));
+    press(&mut app, KeyCode::Down, KeyModifiers::NONE);
+    assert_eq!(app.editor.row_col(), (1, 2));
+    assert_eq!(app.editor.text(), "ab\ncd");
+}
+
+#[test]
+fn paste_keeps_newlines_in_the_filter() {
+    use jqplay::app::Event;
+    use ratatui::crossterm::event::Event as TermEvent;
+    let mut app = app_with(Some(SAMPLE), &[]);
+    app.handle(Event::Term(TermEvent::Paste(".users[]\r\n| .name\n".into())));
+    assert_eq!(app.editor.text(), ".users[]\n| .name\n");
+}
+
+#[test]
+fn tall_filter_is_capped_at_half_the_screen_and_keeps_the_cursor_visible() {
+    let mut app = app_with(Some(SAMPLE), &[]);
+    for i in 1..=15 {
+        type_text(&mut app, &format!("l{i}"));
+        if i < 15 {
+            ctrl(&mut app, 'j');
+        }
+    }
+    let screen = render(&mut app, 80, 20);
+    assert_eq!(filter_rows(&screen), 10);
+    assert!(screen.contains("l15") && !screen.contains("> l1 "));
+}

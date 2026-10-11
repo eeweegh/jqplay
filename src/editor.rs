@@ -1,4 +1,4 @@
-// Single-line editor with the readline (Emacs) subset used by the filter pane; cursor counts chars.
+// Multi-line editor with the readline (Emacs) subset used by the filter pane; cursor counts chars.
 #[derive(Debug, Clone, Default)]
 pub struct LineEditor {
     text: String,
@@ -113,32 +113,92 @@ impl LineEditor {
         self.cursor = (self.cursor + 1).min(self.len());
     }
 
+    // Char index where the cursor's line starts / ends (before its '\n').
+    fn line_start(&self) -> usize {
+        let chars = self.chars();
+        (0..self.cursor).rev().find(|&i| chars[i] == '\n').map_or(0, |i| i + 1)
+    }
+
+    fn line_end(&self) -> usize {
+        let chars = self.chars();
+        (self.cursor..chars.len()).find(|&i| chars[i] == '\n').unwrap_or(chars.len())
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.text.matches('\n').count() + 1
+    }
+
+    pub fn row_col(&self) -> (usize, usize) {
+        let row = self.chars()[..self.cursor].iter().filter(|c| **c == '\n').count();
+        (row, self.cursor - self.line_start())
+    }
+
+    pub fn on_first_line(&self) -> bool {
+        self.row_col().0 == 0
+    }
+
+    pub fn on_last_line(&self) -> bool {
+        self.row_col().0 + 1 == self.line_count()
+    }
+
+    pub fn insert_newline(&mut self) {
+        self.insert("\n");
+    }
+
+    // Moves to the same column on the previous/next line (clamped); false when there is none.
+    pub fn up(&mut self) -> bool {
+        let start = self.line_start();
+        if start == 0 {
+            return false;
+        }
+        let col = self.cursor - start;
+        let chars = self.chars();
+        let prev_start = (0..start - 1).rev().find(|&i| chars[i] == '\n').map_or(0, |i| i + 1);
+        self.cursor = prev_start + col.min(start - 1 - prev_start);
+        true
+    }
+
+    pub fn down(&mut self) -> bool {
+        let end = self.line_end();
+        if end >= self.len() {
+            return false;
+        }
+        let col = self.cursor - self.line_start();
+        let chars = self.chars();
+        let next_start = end + 1;
+        let next_end = (next_start..chars.len()).find(|&i| chars[i] == '\n').unwrap_or(chars.len());
+        self.cursor = next_start + col.min(next_end - next_start);
+        true
+    }
+
     pub fn home(&mut self) {
-        self.cursor = 0;
+        self.cursor = self.line_start();
     }
 
     pub fn end(&mut self) {
-        self.cursor = self.len();
+        self.cursor = self.line_end();
     }
 
     pub fn kill_to_end(&mut self) {
-        let at = self.byte(self.cursor);
-        self.kill = self.text.split_off(at);
+        let (a, b) = (self.byte(self.cursor), self.byte(self.line_end()));
+        self.kill = self.text.drain(a..b).collect();
     }
 
     pub fn kill_to_start(&mut self) {
-        let at = self.byte(self.cursor);
-        self.kill = self.text.drain(..at).collect();
-        self.cursor = 0;
+        let start = self.line_start();
+        let (a, b) = (self.byte(start), self.byte(self.cursor));
+        self.kill = self.text.drain(a..b).collect();
+        self.cursor = start;
     }
 
     pub fn kill_word(&mut self) {
         let chars = self.chars();
+        let line_start = self.line_start();
         let mut start = self.cursor;
-        while start > 0 && chars[start - 1].is_whitespace() {
+        while start > line_start && chars[start - 1].is_whitespace() {
             start -= 1;
         }
-        while start > 0 && !chars[start - 1].is_whitespace() {
+        while start > line_start && !chars[start - 1].is_whitespace() {
             start -= 1;
         }
         let (a, b) = (self.byte(start), self.byte(self.cursor));
@@ -277,5 +337,55 @@ mod tests {
         let mut e = typed("[1", true);
         e.backspace_pair();
         assert_eq!((e.text(), e.cursor()), ("[]", 1));
+    }
+
+    #[test]
+    fn rows_columns_and_line_counts() {
+        let e = ed("ab\ncde\nf", 5);
+        assert_eq!((e.row_col(), e.line_count()), ((1, 2), 3));
+        assert!(!e.on_first_line() && !e.on_last_line());
+        assert!(ed("x\ny", 0).on_first_line() && ed("x\ny", 3).on_last_line());
+        assert_eq!(ed("", 0).line_count(), 1);
+    }
+
+    #[test]
+    fn up_and_down_keep_the_column_and_clamp() {
+        let mut e = ed("abcdef\nab\nabcd", 13);
+        assert!(e.up());
+        assert_eq!(e.cursor(), 9);
+        assert!(e.up() && e.row_col() == (0, 2));
+        assert!(!e.up());
+        assert!(e.down() && e.down());
+        assert!(!e.down());
+        assert_eq!(e.row_col(), (2, 2));
+    }
+
+    #[test]
+    fn home_end_and_kills_stay_on_the_line() {
+        let mut e = ed("one\ntwo three\nfour", 9);
+        e.home();
+        assert_eq!(e.cursor(), 4);
+        e.end();
+        assert_eq!(e.cursor(), 13);
+        e.set_cursor(7);
+        e.kill_to_end();
+        assert_eq!(e.text(), "one\ntwo\nfour");
+        e.kill_to_start();
+        assert_eq!((e.text(), e.cursor()), ("one\n\nfour", 4));
+        let mut e = ed("a\nfoo bar", 9);
+        e.kill_word();
+        assert_eq!(e.text(), "a\nfoo ");
+        e.kill_word();
+        e.kill_word();
+        assert_eq!(e.text(), "a\n");
+    }
+
+    #[test]
+    fn newline_inserts_and_backspace_joins_lines() {
+        let mut e = ed("ab", 1);
+        e.insert_newline();
+        assert_eq!((e.text(), e.row_col()), ("a\nb", (1, 0)));
+        e.backspace();
+        assert_eq!(e.text(), "ab");
     }
 }

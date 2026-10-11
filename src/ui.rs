@@ -8,10 +8,12 @@ use ratatui::widgets::{
     Block, BorderType, Clear, List, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 
-const HINTS: &str = "Tab=focus ^Space=complete Enter=accept ^C=abort ^S=save ^F=reload Esc=dismiss";
+const HINTS: &str = "Tab=focus ^Space=complete Enter=accept ^J=newline ^S=save ^F=reload Esc=dismiss";
 
-pub fn filter_height(rows: u16) -> u16 {
-    (rows / 4).min(12).checked_div(2).unwrap_or(0).max(3)
+// One row per text line plus borders, between 3 rows and half the terminal.
+pub fn filter_height(rows: u16, lines: usize) -> u16 {
+    let wanted = u16::try_from(lines).unwrap_or(u16::MAX).saturating_add(2);
+    wanted.clamp(3, (rows / 2).max(3))
 }
 
 fn block(title: &str, focused: bool, app: &App) -> Block<'static> {
@@ -22,7 +24,7 @@ fn block(title: &str, focused: bool, app: &App) -> Block<'static> {
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
     let [filter_area, lower, status_area] = Layout::vertical([
-        Constraint::Length(filter_height(area.height)),
+        Constraint::Length(filter_height(area.height, app.editor.line_count())),
         Constraint::Min(0),
         Constraint::Length(1),
     ])
@@ -52,19 +54,32 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 fn draw_filter(frame: &mut Frame, app: &App, area: Rect) {
     let block = block("jq Filter", app.focus == Focus::Filter, app);
     let inner = block.inner(area);
-    let width = usize::from(inner.width);
-    let offset = (app.editor.cursor() + 3).saturating_sub(width);
-    let line = Line::from(vec![
-        Span::styled("> ", app.theme.border_focus),
-        Span::raw(app.editor.text().to_string()),
-    ]);
+    let (row, col) = app.editor.row_col();
+    let (voff, hoff) = (
+        (row + 1).saturating_sub(usize::from(inner.height)),
+        (col + 3).saturating_sub(usize::from(inner.width)),
+    );
+    let lines: Vec<Line> = app
+        .editor
+        .text()
+        .split('\n')
+        .enumerate()
+        .map(|(i, text)| {
+            let prefix = if i == 0 { Span::styled("> ", app.theme.border_focus) } else { Span::raw("  ") };
+            Line::from(vec![prefix, Span::raw(text.to_string())])
+        })
+        .collect();
     frame.render_widget(
-        Paragraph::new(line).style(app.theme.text).scroll((0, offset as u16)).block(block),
+        Paragraph::new(lines).style(app.theme.text).scroll((voff as u16, hoff as u16)).block(block),
         area,
     );
     if app.focus == Focus::Filter && app.prompt.is_none() {
-        let x = inner.x + (app.editor.cursor() + 2 - offset.min(app.editor.cursor() + 2)) as u16;
-        frame.set_cursor_position(Position::new(x.min(inner.right().saturating_sub(1)), inner.y));
+        let x = inner.x + (col + 2 - hoff.min(col + 2)) as u16;
+        let y = inner.y + (row - voff) as u16;
+        frame.set_cursor_position(Position::new(
+            x.min(inner.right().saturating_sub(1)),
+            y.min(inner.bottom().saturating_sub(1)),
+        ));
     }
 }
 
@@ -181,10 +196,12 @@ mod tests {
     use super::filter_height;
 
     #[test]
-    fn filter_height_follows_terminal_rows() {
-        assert_eq!(filter_height(24), 3);
-        assert_eq!(filter_height(48), 6);
-        assert_eq!(filter_height(200), 6);
-        assert_eq!(filter_height(8), 3);
+    fn filter_height_grows_with_lines_up_to_half_the_terminal() {
+        assert_eq!(filter_height(24, 1), 3);
+        assert_eq!(filter_height(24, 2), 4);
+        assert_eq!(filter_height(24, 5), 7);
+        assert_eq!(filter_height(24, 50), 12);
+        assert_eq!(filter_height(48, 50), 24);
+        assert_eq!(filter_height(4, 9), 3);
     }
 }

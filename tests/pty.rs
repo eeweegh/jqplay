@@ -1,12 +1,36 @@
 #![cfg(unix)]
 use expectrl::{Eof, Expect, Session};
+use std::ops::{Deref, DerefMut};
 use std::process::Command;
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 const CTRL_Q: &str = "\x11";
 const CTRL_C: &str = "\x03";
 
-fn spawn(args: &[&str], stdin_json: Option<&str>) -> expectrl::session::OsSession {
+// forkpty from several test threads at once fails sporadically, so pty tests run one at a time.
+static PTY_LOCK: Mutex<()> = Mutex::new(());
+
+struct Pty {
+    session: expectrl::session::OsSession,
+    _guard: MutexGuard<'static, ()>,
+}
+
+impl Deref for Pty {
+    type Target = expectrl::session::OsSession;
+    fn deref(&self) -> &Self::Target {
+        &self.session
+    }
+}
+
+impl DerefMut for Pty {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.session
+    }
+}
+
+fn spawn(args: &[&str], stdin_json: Option<&str>) -> Pty {
+    let guard = PTY_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let bin = env!("CARGO_BIN_EXE_jqplay");
     let mut cmd = match stdin_json {
         Some(json) => {
@@ -19,7 +43,7 @@ fn spawn(args: &[&str], stdin_json: Option<&str>) -> expectrl::session::OsSessio
     cmd.args(args).args(["--history-file", ""]).env("TERM", "xterm-256color");
     let mut session = Session::spawn(cmd).expect("spawn in pty");
     session.set_expect_timeout(Some(Duration::from_secs(10)));
-    session
+    Pty { session, _guard: guard }
 }
 
 fn pause() {
@@ -120,4 +144,29 @@ fn enter_on_popup_selection_does_not_quit() {
     s.send("\x03").unwrap();
     let rest = s.expect(Eof).unwrap();
     assert!(!String::from_utf8_lossy(rest.before()).contains("jq '"));
+}
+
+#[test]
+fn ctrl_j_inserts_a_newline_and_enter_still_accepts() {
+    let mut s = spawn(&["tests/data/small.json"], None);
+    pause();
+    s.send(".a").unwrap();
+    s.send("\x0a").unwrap();
+    s.send("| .b").unwrap();
+    pause();
+    s.send("\r").unwrap();
+    s.expect("| .b'").unwrap();
+    s.expect(Eof).unwrap();
+}
+
+#[test]
+fn alt_enter_inserts_a_newline_in_a_real_terminal() {
+    let mut s = spawn(&["tests/data/small.json"], None);
+    pause();
+    s.send(".a").unwrap();
+    s.send("\x1b\r").unwrap();
+    s.send("| .b").unwrap();
+    pause();
+    s.send("\r").unwrap();
+    s.expect("| .b'").unwrap();
 }

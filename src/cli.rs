@@ -30,7 +30,7 @@ Global keybindings:
                     does this from the JSON or Result pane
   Esc               dismiss a status message / close the completion popup
   Ctrl+F            reload the JSON from its source file (not for stdin)
-  Up / Down         (filter pane, popup closed) recall previous/next filter
+  Alt+Enter / Ctrl+J  insert a newline in the filter (also Shift+Enter in terminals\n                    with the kitty keyboard protocol); the pane grows with its lines\n  Up / Down         (filter pane, popup closed) move between lines, then recall\n                    previous/next filter from the first/last line
 
 Single keys (JSON Input or Result pane only, so they never clash with typing):
   r                 raw output (-r)            c   compact output (-c)

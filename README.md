@@ -10,6 +10,7 @@ jqplay data.json --filter '.items[] | select(.active)'
 ```
 
 `jqplay --help` lists every key binding. Enter (filter pane) or `q` (other panes) accepts and prints `jq '<filter>'`; Ctrl+C aborts.
+The filter pane is multi-line: Alt+Enter or Ctrl+J (Shift+Enter in kitty-protocol terminals such as wezterm) adds a line and the pane grows with it.
 
 ## Layout of the code
 
