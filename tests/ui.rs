@@ -1,7 +1,9 @@
 mod support;
 
-use jqplay::app::{Focus, Outcome};
-use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+use jqplay::app::{Event, Focus, Outcome};
+use ratatui::crossterm::event::{
+    Event as TermEvent, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use support::{SAMPLE, app_with, ctrl, flush_debounce, focus_next, focus_prev, press, render, type_text};
 
 #[test]
@@ -411,4 +413,29 @@ fn tall_filter_is_capped_at_half_the_screen_and_keeps_the_cursor_visible() {
     let screen = render(&mut app, 80, 20);
     assert_eq!(filter_rows(&screen), 10);
     assert!(screen.contains("l15") && !screen.contains("> l1 "));
+}
+
+fn mouse(app: &mut jqplay::app::App, kind: MouseEventKind, column: u16, row: u16) {
+    app.handle(Event::Term(TermEvent::Mouse(MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    })));
+}
+
+#[test]
+fn dragging_the_divider_resizes_the_panes() {
+    let mut app = app_with(Some(r#"{"a":1}"#), &[".a"]);
+    render(&mut app, 100, 24);
+    assert_eq!(app.rects.json.width, 50);
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), 50, 10);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), 30, 10);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), 30, 10);
+    render(&mut app, 100, 24);
+    assert_eq!(app.rects.json.width, 30);
+    // Not dragging any more: further movement is ignored.
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), 70, 10);
+    render(&mut app, 100, 24);
+    assert_eq!(app.rects.json.width, 30);
 }

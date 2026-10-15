@@ -30,7 +30,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     ])
     .areas(area);
     let [json_area, results_area] =
-        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(lower);
+        Layout::horizontal([Constraint::Percentage(app.split_pct), Constraint::Min(0)]).areas(lower);
     app.rects.filter = filter_area;
     app.rects.json = json_area;
     app.rects.results = results_area;

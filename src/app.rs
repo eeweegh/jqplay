@@ -122,6 +122,8 @@ pub struct App {
     pub autocomplete: bool,
     pub status_message: String,
     pub rects: Rects,
+    pub split_pct: u16,
+    dragging: bool,
     history: FilterHistory,
     history_file: Option<PathBuf>,
     source_file: Option<PathBuf>,
@@ -138,6 +140,15 @@ pub struct App {
     inflight: [Option<(u64, JobKind)>; JobKind::SLOTS],
     outbox: Vec<Job>,
     outcome: Option<Outcome>,
+}
+
+// Percentage of `lower` left of `column`, keeping at least MIN_PANE_WIDTH columns on each side.
+pub fn split_for_column(column: u16, lower: Rect) -> u16 {
+    const MIN_PANE_WIDTH: u32 = 8;
+    let width = u32::from(lower.width).max(1);
+    let lo = (MIN_PANE_WIDTH * 100).div_ceil(width).clamp(10, 50);
+    let pct = u32::from(column.saturating_sub(lower.x)) * 100 / width;
+    pct.clamp(lo, 100 - lo) as u16
 }
 
 fn is_plain_char(key: &KeyEvent) -> Option<char> {
@@ -265,6 +276,8 @@ impl App {
             autocomplete: settings.autocomplete,
             status_message: String::new(),
             rects: Rects::default(),
+            split_pct: 50,
+            dragging: false,
             history,
             history_file: settings.history_file.clone(),
             source_file: settings.file.clone(),
@@ -602,6 +615,18 @@ impl App {
         }
     }
 
+    // The shared border of the two panes, with one column of slack on each side.
+    fn on_divider(&self, at: Position) -> bool {
+        let (json, results) = (self.rects.json, self.rects.results);
+        let rows = json.y..json.bottom();
+        rows.contains(&at.y) && at.x + 2 >= results.x && at.x <= results.x + 1
+    }
+
+    fn drag_divider(&mut self, column: u16) {
+        let lower = self.rects.json.union(self.rects.results);
+        self.split_pct = split_for_column(column, lower);
+    }
+
     fn on_mouse(&mut self, mouse: MouseEvent) {
         if self.prompt.is_some() {
             return;
@@ -616,6 +641,9 @@ impl App {
         .find(|(_, r)| r.contains(at))
         .map(|(f, _)| f);
         match (mouse.kind, target) {
+            (MouseEventKind::Down(MouseButton::Left), _) if self.on_divider(at) => self.dragging = true,
+            (MouseEventKind::Drag(MouseButton::Left), _) if self.dragging => self.drag_divider(at.x),
+            (MouseEventKind::Up(MouseButton::Left), _) => self.dragging = false,
             (MouseEventKind::Down(MouseButton::Left), Some(f)) if f != self.focus => self.set_focus(f),
             (MouseEventKind::ScrollUp | MouseEventKind::ScrollDown, Some(f)) => {
                 let down = mouse.kind == MouseEventKind::ScrollDown;
@@ -778,3 +806,19 @@ impl App {
 }
 
 pub use completion::MAX_VISIBLE_ROWS;
+
+#[cfg(test)]
+mod split_tests {
+    use super::split_for_column;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn split_follows_column_and_keeps_both_panes_usable() {
+        let lower = Rect::new(0, 1, 100, 20);
+        assert_eq!(split_for_column(30, lower), 30);
+        assert_eq!(split_for_column(0, lower), 10);
+        assert_eq!(split_for_column(99, lower), 90);
+        let narrow = Rect::new(0, 1, 40, 20);
+        assert_eq!(split_for_column(1, narrow), 20);
+    }
+}
