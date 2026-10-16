@@ -454,7 +454,9 @@ fn search_jumps_steps_wraps_and_ends_with_esc() {
     focus_next(&mut app);
     assert_eq!(app.focus, Focus::Results);
     type_text(&mut app, "/item5");
-    assert!(render(&mut app, 80, 24).contains("/item5_ (1/11)"));
+    let r = render(&mut app, 80, 24);
+    eprintln!("{r}");
+    assert!(r.contains("/item5_ (1/11)"));
     type_text(&mut app, "r");
     assert!(render(&mut app, 80, 24).contains("(no match)"));
     press(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
