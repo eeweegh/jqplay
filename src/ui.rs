@@ -10,8 +10,7 @@ use ratatui::widgets::{
     Block, BorderType, Clear, List, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 
-const HINTS: &str =
-    "Tab=focus /=search ^Space=complete Enter=accept ^J=newline ^S=save ^F=reload Esc=dismiss";
+const HINTS: &str = "^Space=complete Enter=accept ^J=newline ^S=save ^F=reload";
 
 // One row per text line plus borders, between 3 rows and half the terminal.
 pub fn filter_height(rows: u16, lines: usize) -> u16 {
@@ -101,7 +100,7 @@ fn with_search_title(block: Block<'static>, pane: &Pane) -> Block<'static> {
 }
 
 // Marks the hits on visible line `line`, relative to the first visible column.
-fn marks_for(pane: &Pane, line: usize, current: Style) -> Vec<(std::ops::Range<usize>, Style)> {
+fn marks_for(pane: &Pane, line: usize, theme: &Theme) -> Vec<(std::ops::Range<usize>, Style)> {
     let Some(search) = &pane.search else { return Vec::new() };
     let lo = search.matches.partition_point(|m| m.line < line);
     let hi = search.matches.partition_point(|m| m.line <= line);
@@ -109,9 +108,9 @@ fn marks_for(pane: &Pane, line: usize, current: Style) -> Vec<(std::ops::Range<u
         .map(|i| {
             let m = search.matches[i];
             let style = if i == search.current {
-                current.add_modifier(Modifier::UNDERLINED)
+                Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
             } else {
-                Style::default().add_modifier(Modifier::REVERSED)
+                theme.hit
             };
             (m.col.saturating_sub(pane.scroll_x)..(m.col + m.len).saturating_sub(pane.scroll_x), style)
         })
@@ -131,7 +130,7 @@ fn draw_pane(frame: &mut Frame, area: Rect, block: Block<'static>, pane: &mut Pa
         lines = lines
             .into_iter()
             .enumerate()
-            .map(|(i, line)| highlight_line(line, &marks_for(pane, pane.scroll_y + i, theme.selected)))
+            .map(|(i, line)| highlight_line(line, &marks_for(pane, pane.scroll_y + i, theme)))
             .collect();
     }
     frame
@@ -146,8 +145,17 @@ fn draw_pane(frame: &mut Frame, area: Rect, block: Block<'static>, pane: &mut Pa
     }
 }
 
-fn option_span(app: &App, label: &str, key: char, on: bool) -> Span<'static> {
-    Span::styled(format!("{label} [{key}]"), if on { app.theme.option_on } else { app.theme.option_off })
+// "[r]aw" style without the brackets: an option that is off gets its key letter (the first letter)
+// in colour; one that is on reads as plain bold text.
+fn option_spans(app: &App, label: &str, on: bool) -> Vec<Span<'static>> {
+    if on {
+        return vec![Span::styled(label.to_string(), app.theme.option_on)];
+    }
+    let (key, rest) = label.split_at(1);
+    vec![
+        Span::styled(key.to_string(), app.theme.toggle_off),
+        Span::styled(rest.to_string(), app.theme.option_off),
+    ]
 }
 
 // One line, capped at a third of the bar so the option labels and hints stay visible.
@@ -170,20 +178,15 @@ fn status_line(app: &App, width: u16) -> Line<'static> {
         spans.push(Span::raw(format!("{} | ", flatten_message(&app.status_message, width))));
     }
     spans.push(Span::raw(format!("json:{}  ", if app.json_valid { "valid" } else { "INVALID" })));
-    for (i, (label, key, on)) in [
-        ("raw", 'r', raw),
-        ("compact", 'c', compact),
-        ("sort", 'S', sort_keys),
-        ("slurp", 's', slurp),
-        ("color", 'C', color),
-    ]
-    .into_iter()
-    .enumerate()
+    for (i, (label, on)) in
+        [("raw", raw), ("compact", compact), ("Sort", sort_keys), ("slurp", slurp), ("Color", color)]
+            .into_iter()
+            .enumerate()
     {
         if i > 0 {
             spans.push(Span::raw(" "));
         }
-        spans.push(option_span(app, label, key, on));
+        spans.extend(option_spans(app, label, on));
     }
     spans.push(Span::raw("  "));
     spans.push(Span::styled(HINTS, app.theme.option_off));

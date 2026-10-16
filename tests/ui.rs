@@ -199,7 +199,7 @@ fn long_multiline_message_keeps_status_bar_intact() {
     app.status_message = format!("jq: error: {}\nsecond line", "boom ".repeat(60));
     let screen = render(&mut app, 140, 12);
     let last = screen.lines().last().unwrap();
-    assert!(last.contains("json:valid") && last.contains("color [C]") && last.contains('…'), "{last}");
+    assert!(last.contains("json:valid") && last.contains("Color") && last.contains('…'), "{last}");
     assert_eq!(screen.lines().count(), 12);
 }
 
@@ -484,6 +484,6 @@ fn n_toggles_nothing_and_slash_is_per_pane() {
     press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
     type_text(&mut app, "c");
     // Navigating mode still lets option keys through.
-    assert!(render(&mut app, 100, 24).contains("compact [c]"));
+    assert!(render(&mut app, 100, 24).contains("compact"));
     assert!(render(&mut app, 100, 24).contains("/item1"));
 }

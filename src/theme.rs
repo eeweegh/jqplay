@@ -23,6 +23,8 @@ pub struct Theme {
     pub selected: Style,
     pub option_on: Style,
     pub option_off: Style,
+    pub toggle_off: Style,
+    pub hit: Style,
     pub working: Style,
     pub idle: Style,
 }
@@ -39,6 +41,8 @@ impl Theme {
             selected: Style::default().fg(Color::Black).bg(accent),
             option_on: fg(Color::Gray).add_modifier(Modifier::BOLD),
             option_off: fg(Color::Gray).add_modifier(Modifier::DIM),
+            toggle_off: fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            hit: fg(Color::White).add_modifier(Modifier::BOLD),
             working: fg(Color::Red),
             idle: fg(Color::Green),
         };
@@ -51,6 +55,8 @@ impl Theme {
                 selected: Style::default().fg(Color::White).bg(Color::Yellow),
                 option_on: fg(Color::Black).add_modifier(Modifier::BOLD),
                 option_off: fg(Color::Black).add_modifier(Modifier::DIM),
+                toggle_off: fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                hit: fg(Color::Black).add_modifier(Modifier::BOLD),
                 ..dark(Color::Yellow)
             },
             ThemeName::Mono => {
@@ -65,6 +71,8 @@ impl Theme {
                     selected: reversed,
                     option_on: plain.add_modifier(Modifier::BOLD),
                     option_off: plain.add_modifier(Modifier::DIM),
+                    toggle_off: plain.add_modifier(Modifier::UNDERLINED),
+                    hit: plain.add_modifier(Modifier::BOLD),
                     working: reversed,
                     idle: plain,
                 }
