@@ -1,6 +1,7 @@
 mod support;
 
 use jqplay::app::{Event, Focus, Outcome};
+use jqplay::history::FilterHistory;
 use ratatui::crossterm::event::{
     Event as TermEvent, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -486,4 +487,33 @@ fn n_toggles_nothing_and_slash_is_per_pane() {
     // Navigating mode still lets option keys through.
     assert!(render(&mut app, 100, 24).contains("compact"));
     assert!(render(&mut app, 100, 24).contains("/item1"));
+}
+
+#[test]
+fn history_is_an_array_edited_in_place_and_saved_on_accept_only() {
+    use clap::Parser;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("history");
+    std::fs::write(&file, r#"[".a", ".b"]"#).unwrap();
+    let start = |file: &std::path::Path| {
+        let cli = jqplay::cli::Cli::parse_from(["jqplay", "--history-file", file.to_str().unwrap()]);
+        let settings = jqplay::config::Settings::resolve(&cli, &jqplay::config::Config::default());
+        let mut app = jqplay::app::App::new(&settings, Some(SAMPLE.to_string()));
+        support::settle(&mut app);
+        app
+    };
+    let mut app = start(&file);
+    assert_eq!(app.focus, Focus::Filter);
+    press(&mut app, KeyCode::Up, KeyModifiers::NONE);
+    assert!(render(&mut app, 80, 24).contains("> .b"));
+    type_text(&mut app, "x");
+    press(&mut app, KeyCode::Up, KeyModifiers::NONE);
+    press(&mut app, KeyCode::Down, KeyModifiers::NONE);
+    assert!(render(&mut app, 80, 24).contains("> .bx"));
+    // Nothing is written until a normal quit.
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), r#"[".a", ".b"]"#);
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert!(matches!(app.outcome(), Some(Outcome::Clean(f)) if f == ".bx"));
+    app.save_history();
+    assert_eq!(FilterHistory::load(&file).entries(), [".a", ".b", ".bx", ""]);
 }

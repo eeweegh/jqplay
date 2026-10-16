@@ -32,5 +32,10 @@ pub fn run(cli: &Cli) -> anyhow::Result<Outcome> {
     let json = input::load_initial_json(settings.file.as_deref())?;
     let settings = settings.with_input_size(json.as_deref().map_or(0, |j| j.chars().count()));
     let mut app = App::new(&settings, json);
-    Ok(run::event_loop(&mut app, settings.mouse)?)
+    let outcome = run::event_loop(&mut app, settings.mouse);
+    // Only a normal quit (accept) saves the history, whether or not the filter ran.
+    if matches!(outcome, Ok(Outcome::Clean(_))) {
+        app.save_history();
+    }
+    Ok(outcome?)
 }

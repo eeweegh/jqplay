@@ -348,7 +348,7 @@ fn error_doc(stderr: &str, fallback: &str) -> Document {
 impl App {
     pub fn new(settings: &Settings, json: Option<String>) -> Self {
         let history = settings.history_file.as_deref().map(FilterHistory::load).unwrap_or_default();
-        let filter = settings.filter.clone().or_else(|| history.last().map(String::from)).unwrap_or_default();
+        let filter = settings.filter.clone().unwrap_or_default();
         let has_json = json.as_deref().is_some_and(|j| !j.is_empty());
         let mut app = Self {
             theme: Theme::named(settings.theme),
@@ -532,17 +532,15 @@ impl App {
         if out.ok() {
             let doc = Document::new(&out.stdout, self.options.color);
             self.results_pane.set(doc, false);
-            self.record_history();
         } else {
             self.results_pane.set(error_doc(&out.stderr, "jq error"), true);
         }
     }
 
-    fn record_history(&mut self) {
-        let filter = self.applied_filter.clone();
-        self.history.record(&filter);
+    // Writes the history array back; called once when the app quits normally (not on Ctrl-C).
+    pub fn save_history(&mut self) {
         if let Some(path) = &self.history_file {
-            self.history.save_session_entry(path, &filter);
+            self.history.save(path, self.editor.text());
         }
     }
 
@@ -814,8 +812,9 @@ impl App {
                 if (up && self.editor.up()) || (!up && self.editor.down()) {
                     return true;
                 }
+                let current = self.editor.text();
                 let recalled =
-                    if up { self.history.recall_up(self.editor.text()) } else { self.history.recall_down() };
+                    if up { self.history.recall_up(current) } else { self.history.recall_down(current) };
                 if let Some(text) = recalled {
                     self.editor.set_text(&text);
                 }
