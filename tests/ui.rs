@@ -439,3 +439,49 @@ fn dragging_the_divider_resizes_the_panes() {
     render(&mut app, 100, 24);
     assert_eq!(app.rects.json.width, 30);
 }
+
+fn long_doc() -> String {
+    let items: Vec<String> = (0..60).map(|i| format!("\"item{i}\"")).collect();
+    format!("[{}]", items.join(","))
+}
+
+#[test]
+fn search_jumps_steps_wraps_and_ends_with_esc() {
+    let mut app = app_with(Some(&long_doc()), &["--filter", ".[]", "--raw"]);
+    render(&mut app, 80, 24);
+    // Results pane, `r` while typing is literal and must not toggle raw.
+    focus_next(&mut app);
+    focus_next(&mut app);
+    assert_eq!(app.focus, Focus::Results);
+    type_text(&mut app, "/item5");
+    assert!(render(&mut app, 80, 24).contains("/item5_ (1/11)"));
+    type_text(&mut app, "r");
+    assert!(render(&mut app, 80, 24).contains("(no match)"));
+    press(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    let committed = render(&mut app, 80, 24);
+    assert!(committed.contains("/item5 (1/11)"));
+    type_text(&mut app, "n");
+    assert!(render(&mut app, 80, 24).contains("(2/11)"));
+    type_text(&mut app, "N");
+    type_text(&mut app, "N");
+    assert!(render(&mut app, 80, 24).contains("(11/11)"));
+    // The other pane has its own, untouched search state.
+    focus_prev(&mut app);
+    assert!(app.json_pane.search.is_none() && app.results_pane.search.is_some());
+    focus_next(&mut app);
+    press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert!(!render(&mut app, 80, 24).contains("/item5"));
+}
+
+#[test]
+fn n_toggles_nothing_and_slash_is_per_pane() {
+    let mut app = app_with(Some(&long_doc()), &["--filter", ".[]"]);
+    focus_next(&mut app);
+    type_text(&mut app, "/item1");
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    type_text(&mut app, "c");
+    // Navigating mode still lets option keys through.
+    assert!(render(&mut app, 100, 24).contains("compact [c]"));
+    assert!(render(&mut app, 100, 24).contains("/item1"));
+}

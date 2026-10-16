@@ -138,6 +138,43 @@ fn push_window(
     }
 }
 
+// A search hit in visible (escape-free) text; `col` and `len` count chars, like the window columns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Match {
+    pub line: usize,
+    pub col: usize,
+    pub len: usize,
+}
+
+// One char to one char, so match columns stay aligned with the displayed text.
+fn fold(c: char) -> char {
+    c.to_lowercase().next().unwrap_or(c)
+}
+
+// Restyles the chars of `line` that fall inside a mark's column range (relative to the line start).
+pub fn highlight_line(line: Line<'static>, marks: &[(Range<usize>, Style)]) -> Line<'static> {
+    let (mut out, mut col) = (Vec::new(), 0);
+    for span in line.spans {
+        let (mut run, mut run_style) = (String::new(), span.style);
+        for ch in span.content.chars() {
+            let style = marks
+                .iter()
+                .find(|(r, _)| r.contains(&col))
+                .map_or(span.style, |(_, mark)| span.style.patch(*mark));
+            if style != run_style && !run.is_empty() {
+                out.push(Span::styled(std::mem::take(&mut run), run_style));
+            }
+            run_style = style;
+            run.push(ch);
+            col += 1;
+        }
+        if !run.is_empty() {
+            out.push(Span::styled(run, run_style));
+        }
+    }
+    Line::from(out)
+}
+
 // Text of a pane with line boundaries and per-line SGR state indexed up front, so a frame only
 // parses the lines (and columns) that are actually visible.
 #[derive(Debug, Clone, Default)]
@@ -195,6 +232,32 @@ impl Document {
 
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    // Literal search over the visible text, in document order. Smart-case: a query containing an
+    // uppercase char matches case-sensitively, otherwise case is ignored.
+    pub fn find(&self, query: &str) -> Vec<Match> {
+        let fold = if query.chars().any(char::is_uppercase) { |c| c } else { fold };
+        let needle: Vec<char> = query.chars().map(fold).collect();
+        let mut found = Vec::new();
+        if needle.is_empty() {
+            return found;
+        }
+        for (line, range) in self.lines.iter().enumerate() {
+            let raw = &self.text[range.clone()];
+            let plain = if self.color { strip_ansi(raw) } else { raw.to_string() };
+            let hay: Vec<char> = plain.chars().map(fold).collect();
+            let mut col = 0;
+            while col + needle.len() <= hay.len() {
+                if hay[col..col + needle.len()] == needle[..] {
+                    found.push(Match { line, col, len: needle.len() });
+                    col += needle.len();
+                } else {
+                    col += 1;
+                }
+            }
+        }
+        found
     }
 
     pub fn window(&self, top: usize, height: usize, left: usize, width: usize) -> Vec<Line<'static>> {
@@ -257,6 +320,31 @@ mod tests {
         let l = d.window(0, 1, 2, 5);
         let text: String = l[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(text, "cdefg");
+    }
+
+    #[test]
+    fn find_is_smart_case_and_sees_through_escapes() {
+        let d = Document::new("Foo \x1b[31mfo\x1b[0mo\nxfoofoo", true);
+        let at = |line, col| Match { line, col, len: 3 };
+        assert_eq!(d.find("foo"), vec![at(0, 0), at(0, 4), at(1, 1), at(1, 4)]);
+        assert_eq!(d.find("Foo"), vec![at(0, 0)]);
+        assert!(d.find("FOO").is_empty());
+        assert!(d.find("").is_empty());
+        assert!(d.find("zzz").is_empty());
+    }
+
+    #[test]
+    fn highlight_splits_spans_at_mark_edges() {
+        let line = Line::from(vec![Span::raw("abc"), Span::styled("def", Style::default().fg(Color::Red))]);
+        let mark = Style::default().add_modifier(Modifier::REVERSED);
+        let out = highlight_line(line, &[(2..4, mark)]);
+        let parts: Vec<(&str, bool)> = out
+            .spans
+            .iter()
+            .map(|s| (s.content.as_ref(), s.style.add_modifier.contains(Modifier::REVERSED)))
+            .collect();
+        assert_eq!(parts, [("ab", false), ("c", true), ("d", true), ("ef", false)]);
+        assert_eq!(out.spans[2].style.fg, Some(Color::Red));
     }
 
     #[test]

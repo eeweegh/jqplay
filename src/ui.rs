@@ -1,14 +1,17 @@
-use crate::app::{App, Focus, MAX_VISIBLE_ROWS, Pane};
+use crate::ansi::highlight_line;
+use crate::app::{App, Focus, MAX_VISIBLE_ROWS, Pane, SearchMode};
 use crate::jq::Options;
+use crate::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Position, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, BorderType, Clear, List, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 
-const HINTS: &str = "Tab=focus ^Space=complete Enter=accept ^J=newline ^S=save ^F=reload Esc=dismiss";
+const HINTS: &str =
+    "Tab=focus /=search ^Space=complete Enter=accept ^J=newline ^S=save ^F=reload Esc=dismiss";
 
 // One row per text line plus borders, between 3 rows and half the terminal.
 pub fn filter_height(rows: u16, lines: usize) -> u16 {
@@ -37,10 +40,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     draw_filter(frame, app, filter_area);
     let (json_focus, results_focus) = (app.focus == Focus::Json, app.focus == Focus::Results);
-    let (theme, json_block, results_block) =
-        (app.theme, block("JSON Input", json_focus, app), block("Result", results_focus, app));
-    draw_pane(frame, json_area, json_block, &mut app.json_pane, theme.text, theme.error);
-    draw_pane(frame, results_area, results_block, &mut app.results_pane, theme.text, theme.error);
+    let (theme, json_block, results_block) = (
+        app.theme,
+        with_search_title(block("JSON Input", json_focus, app), &app.json_pane),
+        with_search_title(block("Result", results_focus, app), &app.results_pane),
+    );
+    draw_pane(frame, json_area, json_block, &mut app.json_pane, &theme);
+    draw_pane(frame, results_area, results_block, &mut app.results_pane, &theme);
     frame.render_widget(status_line(app, status_area.width), status_area);
 
     if app.completion.open {
@@ -83,20 +89,51 @@ fn draw_filter(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn draw_pane(
-    frame: &mut Frame,
-    area: Rect,
-    block: Block<'static>,
-    pane: &mut Pane,
-    text: Style,
-    error: Style,
-) {
+// Shows the query and hit counter in the bottom border while a search is active.
+fn with_search_title(block: Block<'static>, pane: &Pane) -> Block<'static> {
+    let Some(search) = &pane.search else { return block };
+    let cursor = if search.mode == SearchMode::Typing { "_" } else { "" };
+    let hits = match search.matches.len() {
+        0 => "no match".to_string(),
+        n => format!("{}/{n}", search.current + 1),
+    };
+    block.title_bottom(format!(" /{}{cursor} ({hits}) ", search.query))
+}
+
+// Marks the hits on visible line `line`, relative to the first visible column.
+fn marks_for(pane: &Pane, line: usize, current: Style) -> Vec<(std::ops::Range<usize>, Style)> {
+    let Some(search) = &pane.search else { return Vec::new() };
+    let lo = search.matches.partition_point(|m| m.line < line);
+    let hi = search.matches.partition_point(|m| m.line <= line);
+    (lo..hi)
+        .map(|i| {
+            let m = search.matches[i];
+            let style = if i == search.current {
+                current.add_modifier(Modifier::UNDERLINED)
+            } else {
+                Style::default().add_modifier(Modifier::REVERSED)
+            };
+            (m.col.saturating_sub(pane.scroll_x)..(m.col + m.len).saturating_sub(pane.scroll_x), style)
+        })
+        .collect()
+}
+
+fn draw_pane(frame: &mut Frame, area: Rect, block: Block<'static>, pane: &mut Pane, theme: &Theme) {
+    let (text, error) = (theme.text, theme.error);
     let inner = block.inner(area);
     let (h, w) = (usize::from(inner.height), usize::from(inner.width));
     pane.view_h = h;
+    pane.view_w = w;
     pane.scroll_y = pane.scroll_y.min(pane.doc.len().saturating_sub(h));
     pane.scroll_x = pane.scroll_x.min(pane.doc.width().saturating_sub(w));
-    let lines = pane.doc.window(pane.scroll_y, h, pane.scroll_x, w);
+    let mut lines = pane.doc.window(pane.scroll_y, h, pane.scroll_x, w);
+    if pane.search.is_some() {
+        lines = lines
+            .into_iter()
+            .enumerate()
+            .map(|(i, line)| highlight_line(line, &marks_for(pane, pane.scroll_y + i, theme.selected)))
+            .collect();
+    }
     frame
         .render_widget(Paragraph::new(lines).style(if pane.error { error } else { text }).block(block), area);
     if pane.doc.len() > h {
