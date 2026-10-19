@@ -10,7 +10,7 @@ use ratatui::widgets::{
     Block, BorderType, Clear, List, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 
-const HINTS: &str = "^Space=complete Enter=accept ^J=newline ^S=save ^F=reload";
+const HINTS: &str = "^Space=complete ^Q=accept ^S=save ^F=reload";
 
 // One row per text line plus borders, between 3 rows and half the terminal.
 pub fn filter_height(rows: u16, lines: usize) -> u16 {
@@ -177,7 +177,12 @@ fn status_line(app: &App, width: u16) -> Line<'static> {
     if !app.status_message.is_empty() {
         spans.push(Span::raw(format!("{} | ", flatten_message(&app.status_message, width))));
     }
-    spans.push(Span::raw(format!("json:{}  ", if app.json_valid { "valid" } else { "INVALID" })));
+    let validity = match (app.json_valid, app.json_count) {
+        (true, Some(count)) => format!("valid ({count})"),
+        (true, None) => "valid".to_string(),
+        (false, _) => "INVALID".to_string(),
+    };
+    spans.push(Span::raw(format!("json:{validity}  ")));
     for (i, (label, on)) in
         [("raw", raw), ("compact", compact), ("Sort", sort_keys), ("slurp", slurp), ("Color", color)]
             .into_iter()

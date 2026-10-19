@@ -90,8 +90,12 @@ fn run(args: &[String], input: &str) -> Output {
     }
 }
 
+// Items of the input: a lone top-level array counts its elements, otherwise the top-level values.
+const COUNT_EXPR: &str = r#"if length == 1 and (.[0] | type) == "array" then .[0] | length else length end"#;
+
+// Succeeds iff the input parses; stdout then holds the item count.
 pub fn validate(json: &str) -> Output {
-    run(&["-e".into(), ".".into()], json)
+    run(&["-e".into(), "-s".into(), COUNT_EXPR.into()], json)
 }
 
 pub fn run_filter(json: &str, filter: &str, options: Options) -> Output {
@@ -137,6 +141,20 @@ mod tests {
         assert!(!validate("{oops").ok());
         let out = run_filter("{\"a\":[1,2]}", ".a[]", Options { compact: true, ..Options::default() });
         assert_eq!(out.stdout, "1\n2\n");
+    }
+
+    #[test]
+    fn validate_counts_items() {
+        if !is_available() {
+            return;
+        }
+        for (input, count) in
+            [("[1,2,3]", "3"), ("{\"a\":1}", "1"), ("{\"a\":1}\n{\"b\":2}", "2"), ("[]", "0"), ("null", "1")]
+        {
+            let out = validate(input);
+            assert!(out.ok(), "{input}: {}", out.stderr);
+            assert_eq!(out.stdout.trim(), count, "{input}");
+        }
     }
 
     #[test]

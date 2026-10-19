@@ -106,10 +106,10 @@ fn ctrl_s_opens_save_prompt_in_a_real_terminal() {
 }
 
 #[test]
-fn enter_accepts_and_prints_filter() {
+fn ctrl_q_accepts_and_prints_filter() {
     let mut s = spawn(&["--filter", ".a", "tests/data/small.json"], None);
     pause();
-    s.send("\r").unwrap();
+    s.send("\x11").unwrap();
     s.expect("jq '.a'").unwrap();
     s.expect(Eof).unwrap();
 }
@@ -147,14 +147,14 @@ fn enter_on_popup_selection_does_not_quit() {
 }
 
 #[test]
-fn ctrl_j_inserts_a_newline_and_enter_still_accepts() {
+fn ctrl_j_inserts_a_newline_and_ctrl_q_accepts() {
     let mut s = spawn(&["tests/data/small.json"], None);
     pause();
     s.send(".a").unwrap();
     s.send("\x0a").unwrap();
     s.send("| .b").unwrap();
     pause();
-    s.send("\r").unwrap();
+    s.send("\x11").unwrap();
     s.expect("| .b'").unwrap();
     s.expect(Eof).unwrap();
 }
@@ -167,6 +167,6 @@ fn alt_enter_inserts_a_newline_in_a_real_terminal() {
     s.send("\x1b\r").unwrap();
     s.send("| .b").unwrap();
     pause();
-    s.send("\r").unwrap();
+    s.send("\x11").unwrap();
     s.expect("| .b'").unwrap();
 }

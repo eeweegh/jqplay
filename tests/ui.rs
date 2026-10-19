@@ -242,9 +242,15 @@ fn completion_still_opens_next_to_paired_brackets() {
 }
 
 #[test]
-fn enter_in_filter_and_q_in_view_panes_accept() {
+fn ctrl_q_anywhere_and_q_in_view_panes_accept_but_enter_does_not() {
     let mut app = app_with(Some(SAMPLE), &["--filter", ".count"]);
     press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.outcome(), None);
+    assert_eq!(app.editor.text(), ".count\n");
+    ctrl(&mut app, 'q');
+    assert_eq!(app.outcome(), Some(&Outcome::Clean(".count\n".into())));
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".count"]);
+    ctrl(&mut app, 'q');
     assert_eq!(app.outcome(), Some(&Outcome::Clean(".count".into())));
     let mut app = app_with(Some(SAMPLE), &["--filter", ".count"]);
     type_text(&mut app, "q");
@@ -309,7 +315,7 @@ fn autopopup_skips_strings_and_exact_matches() {
     let mut app = app_with(Some(SAMPLE), &[]);
     type_text(&mut app, ".count");
     assert!(!app.completion.open);
-    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    ctrl(&mut app, 'q');
     assert_eq!(app.outcome(), Some(&Outcome::Clean(".count".into())));
 }
 
@@ -322,7 +328,7 @@ fn enter_with_popup_open_never_exits_even_if_selection_equals_token() {
     press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
     assert_eq!(app.outcome(), None);
     assert!(!app.completion.open);
-    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    ctrl(&mut app, 'q');
     assert_eq!(app.outcome(), Some(&Outcome::Clean(".users".into())));
 }
 
@@ -512,8 +518,19 @@ fn history_is_an_array_edited_in_place_and_saved_on_accept_only() {
     assert!(render(&mut app, 80, 24).contains("> .bx"));
     // Nothing is written until a normal quit.
     assert_eq!(std::fs::read_to_string(&file).unwrap(), r#"[".a", ".b"]"#);
-    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    ctrl(&mut app, 'q');
     assert!(matches!(app.outcome(), Some(Outcome::Clean(f)) if f == ".bx"));
     app.save_history();
     assert_eq!(FilterHistory::load(&file).entries(), [".a", ".b", ".bx", ""]);
+}
+
+#[test]
+fn status_bar_shows_item_count_only_for_valid_json() {
+    let mut app = app_with(Some(SAMPLE), &[]);
+    assert!(render(&mut app, 100, 24).contains("json:valid (1)"));
+    let mut app = app_with(Some("[1,2,3]\n"), &[]);
+    assert!(render(&mut app, 100, 24).contains("json:valid (3)"));
+    let mut app = app_with(Some("{oops"), &[]);
+    let screen = render(&mut app, 100, 24);
+    assert!(screen.contains("json:INVALID") && !screen.contains("INVALID ("));
 }

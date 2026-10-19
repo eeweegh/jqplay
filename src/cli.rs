@@ -18,20 +18,19 @@ Layout:
   Each pane scrolls independently (arrows, PageUp/PageDown, Home/End, mouse
   wheel). In JSON Input and Result, / starts an incremental search of that pane (smart-case; Enter
   keeps it, n / N jump to the next / previous match, Esc ends it). They are view-only; load JSON via a file argument,
-  stdin, or Ctrl+F. On accepting (Enter in the filter pane, q elsewhere) the current filter is printed to
+  stdin, or Ctrl+F. On accepting (q in the JSON/Result panes, Ctrl+Q anywhere) the current filter is printed to
   stdout as: jq '<filter>'
 
 Global keybindings:
   Tab / Shift+Tab   switch focus between panes (next / previous)
-  Enter / q         accept and exit: code 0, prints the current jq filter
-                    (Enter in the filter pane, q in the JSON/Result panes;
-                    Ctrl+Q also works anywhere)
+  q / Ctrl+Q        accept and exit: code 0, prints the current jq filter
+                    (q in the JSON/Result panes, Ctrl+Q anywhere)
   Ctrl+C            abort: code 1, prints nothing
   Ctrl+S            save the Result text to a path (any pane); Ctrl+Y also
                     does this from the JSON or Result pane
   Esc               dismiss a status message / close the completion popup
   Ctrl+F            reload the JSON from its source file (not for stdin)
-  Alt+Enter / Ctrl+J  insert a newline in the filter (also Shift+Enter in terminals\n                    with the kitty keyboard protocol); the pane grows with its lines\n  Up / Down         (filter pane, popup closed) move between lines, then recall\n                    previous/next filter from the first/last line
+  Enter / Alt+Enter / Ctrl+J  insert a newline in the filter (Enter with the popup open accepts the suggestion; Shift+Enter in terminals\n                    with the kitty keyboard protocol); the pane grows with its lines\n  Up / Down         (filter pane, popup closed) move between lines, then recall\n                    previous/next filter from the first/last line
 
 Single keys (JSON Input or Result pane only, so they never clash with typing):
   r                 raw output (-r)            c   compact output (-c)

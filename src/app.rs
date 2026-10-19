@@ -206,6 +206,7 @@ pub struct App {
     pub json_pane: Pane,
     pub results_pane: Pane,
     pub json_valid: bool,
+    pub json_count: Option<usize>,
     pub autopair: bool,
     pub autocomplete: bool,
     pub status_message: String,
@@ -360,6 +361,7 @@ impl App {
             json_pane: Pane::default(),
             results_pane: Pane::default(),
             json_valid: true,
+            json_count: None,
             autopair: settings.autopair,
             autocomplete: settings.autocomplete,
             status_message: String::new(),
@@ -511,6 +513,7 @@ impl App {
     fn rebuild_results(&mut self) {
         if self.blank_json() {
             self.json_valid = true;
+            self.json_count = None;
             return self.results_pane.set(Document::default(), false);
         }
         let Some((g, validity)) = &self.validity else { return };
@@ -518,6 +521,7 @@ impl App {
             return;
         }
         self.json_valid = validity.ok();
+        self.json_count = validity.ok().then(|| validity.stdout.trim().parse().ok()).flatten();
         if !validity.ok() {
             let doc = error_doc(&validity.stderr, "invalid JSON");
             return self.results_pane.set(doc, true);
@@ -788,8 +792,9 @@ impl App {
 
     // Returns true when the filter line consumed the key.
     fn filter_key(&mut self, key: &KeyEvent) -> bool {
+        let open = self.completion.open;
         let newline = (key.code == KeyCode::Enter
-            && key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SHIFT))
+            && (!open || key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SHIFT)))
             || ctrl_char(key) == Some('j');
         if newline {
             self.editor.insert_newline();
@@ -797,7 +802,6 @@ impl App {
             self.on_filter_change();
             return true;
         }
-        let open = self.completion.open;
         match key.code {
             KeyCode::Up | KeyCode::Down if open => {
                 self.completion.step(if key.code == KeyCode::Up { -1 } else { 1 });
@@ -819,10 +823,6 @@ impl App {
                     self.editor.set_text(&text);
                 }
                 self.on_filter_change();
-                return true;
-            }
-            KeyCode::Enter => {
-                self.accept();
                 return true;
             }
             _ => {}
