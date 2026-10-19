@@ -77,3 +77,37 @@ fn piped_stdin_without_a_terminal_exits_cleanly_when_tty_is_unavailable() {
     let out = child.wait_with_output().unwrap();
     assert!(!out.status.success() || !out.stdout.is_empty());
 }
+
+fn assert_silent_success(mut cmd: Command, stdin: Option<&[u8]>) {
+    let mut child = cmd
+        .args(["--history-file", ""])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut pipe = child.stdin.take().unwrap();
+    if let Some(data) = stdin {
+        pipe.write_all(data).unwrap();
+    }
+    drop(pipe);
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "{:?}", out.status);
+    assert!(out.stdout.is_empty() && out.stderr.is_empty(), "{out:?}");
+}
+
+#[test]
+fn empty_stdin_exits_silently_with_status_zero() {
+    assert_silent_success(jqplay(), None);
+    assert_silent_success(jqplay(), Some(b" \n\t\n"));
+}
+
+#[test]
+fn empty_file_exits_silently_with_status_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("empty.json");
+    std::fs::write(&file, "\n").unwrap();
+    let mut cmd = jqplay();
+    cmd.arg(&file);
+    assert_silent_success(cmd, None);
+}

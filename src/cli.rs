@@ -20,6 +20,7 @@ Layout:
   keeps it, n / N jump to the next / previous match, Esc ends it). They are view-only; load JSON via a file argument,
   stdin, or Ctrl+F. On accepting (q in the JSON/Result panes, Ctrl+Q anywhere) the current filter is printed to
   stdout as: jq '<filter>'
+  Empty input (empty or whitespace-only stdin or file) exits at once, silently, with status 0.
 
 Global keybindings:
   Tab / Shift+Tab   switch focus between panes (next / previous)

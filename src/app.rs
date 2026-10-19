@@ -30,6 +30,8 @@ pub enum Event {
 pub enum Outcome {
     Clean(String),
     Abort,
+    // Empty input: nothing to explore, so the program exits silently with status 0.
+    NoInput,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

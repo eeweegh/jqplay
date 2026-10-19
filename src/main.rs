@@ -21,6 +21,7 @@ fn main() -> ExitCode {
             println!("jq '{filter}'");
             ExitCode::SUCCESS
         }
+        Ok(Outcome::NoInput) => ExitCode::SUCCESS,
         Ok(Outcome::Abort) => ExitCode::FAILURE,
         Err(e) => fail(&e),
     }

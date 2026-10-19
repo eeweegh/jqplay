@@ -30,6 +30,9 @@ pub fn run(cli: &Cli) -> anyhow::Result<Outcome> {
     let config = Config::load(cli.config.as_deref())?;
     let settings = Settings::resolve(cli, &config);
     let json = input::load_initial_json(settings.file.as_deref())?;
+    if json.as_deref().is_some_and(|j| j.trim().is_empty()) {
+        return Ok(Outcome::NoInput);
+    }
     let settings = settings.with_input_size(json.as_deref().map_or(0, |j| j.chars().count()));
     let mut app = App::new(&settings, json);
     let outcome = run::event_loop(&mut app, settings.mouse);
