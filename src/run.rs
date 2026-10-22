@@ -47,6 +47,9 @@ pub fn event_loop(app: &mut App, mouse: bool) -> std::io::Result<Outcome> {
             Err(RecvTimeoutError::Disconnected) => return Ok(Outcome::Abort),
         }
         app.tick(Instant::now());
+        if app.take_suspend() {
+            tui.suspend()?;
+        }
         if let Some(outcome) = app.outcome() {
             return Ok(outcome.clone());
         }

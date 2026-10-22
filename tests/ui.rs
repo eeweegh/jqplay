@@ -534,3 +534,25 @@ fn status_bar_shows_item_count_only_for_valid_json() {
     let screen = render(&mut app, 100, 24);
     assert!(screen.contains("json:INVALID") && !screen.contains("INVALID ("));
 }
+
+#[test]
+fn ctrl_z_requests_suspend_in_every_pane_and_mode() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".count"]);
+    assert!(!app.take_suspend());
+    for _ in 0..3 {
+        ctrl(&mut app, 'z');
+        assert!(app.take_suspend());
+        assert!(!app.take_suspend());
+        focus_next(&mut app);
+    }
+    assert_eq!(app.editor.text(), ".count");
+    assert_eq!(app.outcome(), None);
+    ctrl(&mut app, 's');
+    ctrl(&mut app, 'z');
+    assert!(app.take_suspend());
+    press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    type_text(&mut app, "/ab");
+    ctrl(&mut app, 'z');
+    assert!(app.take_suspend());
+    assert_eq!(app.outcome(), None);
+}

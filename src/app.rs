@@ -214,6 +214,7 @@ pub struct App {
     pub status_message: String,
     pub rects: Rects,
     pub split_pct: u16,
+    suspend: bool,
     dragging: bool,
     history: FilterHistory,
     history_file: Option<PathBuf>,
@@ -369,6 +370,7 @@ impl App {
             status_message: String::new(),
             rects: Rects::default(),
             split_pct: 50,
+            suspend: false,
             dragging: false,
             history,
             history_file: settings.history_file.clone(),
@@ -749,7 +751,16 @@ impl App {
         }
     }
 
+    // True once after Ctrl+Z; the event loop then suspends the process.
+    pub fn take_suspend(&mut self) -> bool {
+        std::mem::take(&mut self.suspend)
+    }
+
     fn on_key(&mut self, key: &KeyEvent) {
+        if ctrl_char(key) == Some('z') {
+            self.suspend = true;
+            return;
+        }
         if self.prompt.is_some() {
             return self.prompt_key(key);
         }
