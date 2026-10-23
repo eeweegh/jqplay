@@ -30,9 +30,8 @@ impl DerefMut for Pty {
 }
 
 fn spawn(args: &[&str], stdin_json: Option<&str>) -> Pty {
-    let guard = PTY_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let bin = env!("CARGO_BIN_EXE_jqplay");
-    let mut cmd = match stdin_json {
+    let cmd = match stdin_json {
         Some(json) => {
             let mut c = Command::new("sh");
             c.arg("-c").arg(format!("printf '%s' '{json}' | exec \"$0\" \"$@\"")).arg(bin);
@@ -40,6 +39,11 @@ fn spawn(args: &[&str], stdin_json: Option<&str>) -> Pty {
         }
         None => Command::new(bin),
     };
+    start(cmd, args)
+}
+
+fn start(mut cmd: Command, args: &[&str]) -> Pty {
+    let guard = PTY_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     cmd.args(args).args(["--history-file", ""]).env("TERM", "xterm-256color");
     let mut session = Session::spawn(cmd).expect("spawn in pty");
     session.set_expect_timeout(Some(Duration::from_secs(10)));
@@ -169,4 +173,31 @@ fn alt_enter_inserts_a_newline_in_a_real_terminal() {
     pause();
     s.send("\x11").unwrap();
     s.expect("| .b'").unwrap();
+}
+
+// Whether a jq process whose command line contains `marker` is running.
+fn jq_running(marker: &str) -> bool {
+    Command::new("pgrep").args(["-f", &format!("jq .*{marker}")]).output().is_ok_and(|o| o.status.success())
+}
+
+#[test]
+fn quitting_stops_a_jq_that_never_ends() {
+    let marker = format!("jqplay-orphan-{}", std::process::id());
+    let filter = format!("until(false; .) | \"{marker}\"");
+    // The shell outlives jqplay like in a real terminal; with jqplay as the pty's session leader, closing
+    // the pty would hang up the stray jq and hide the problem.
+    let mut shell = Command::new("sh");
+    shell.arg("-c").arg("\"$0\" \"$@\"; sleep 8").arg(env!("CARGO_BIN_EXE_jqplay"));
+    let mut s = start(shell, &["--filter", &filter, "tests/data/small.json"]);
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(jq_running(&marker), "the runaway jq never started, so the test proves nothing");
+    s.send(CTRL_Q).unwrap();
+    s.expect(format!("jq '{filter}'")).unwrap();
+    for _ in 0..40 {
+        if !jq_running(&marker) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    panic!("jq outlived jqplay");
 }

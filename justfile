@@ -38,3 +38,15 @@ man:
 
 install:
     cargo install --path . --locked --root {{root}}
+
+# bump 1.6.2: set the version, commit "Bump version to 1.6.2", tag v1.6.2 and push both (needs a clean tree)
+bump version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ "{{version}}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version must look like 1.2.3" >&2; exit 1; }
+    git diff --quiet && git diff --cached --quiet || { echo "working tree is not clean" >&2; exit 1; }
+    perl -0pi -e 's/^version = "[^"]*"/version = "{{version}}"/m' Cargo.toml
+    cargo update -p jqplay --offline --quiet
+    git commit --quiet -am "Bump version to {{version}}"
+    git tag -a "v{{version}}" -m "jqplay {{version}}"
+    git push origin HEAD "v{{version}}"

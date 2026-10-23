@@ -154,13 +154,9 @@ fn saving_over_an_existing_file_needs_a_second_enter() {
     press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
     assert!(app.prompt.as_ref().is_some_and(|p| p.overwrite));
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "old");
-    // Editing the path disarms the confirmation.
+    // Editing the path disarms the confirmation; the next Enter asks again.
     press(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
     assert!(app.prompt.as_ref().is_some_and(|p| !p.overwrite));
-    type_text(&mut app, "n");
-    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
-    assert!(app.prompt.is_some());
-    press(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
     type_text(&mut app, "n");
     press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
     assert!(app.prompt.as_ref().is_some_and(|p| p.overwrite));

@@ -36,5 +36,5 @@ Tests: unit tests per module, `tests/ui.rs` (insta snapshots on ratatui's `TestB
 synchronously), `tests/cli.rs` (binary behavior) and `tests/pty.rs` (a real pty: Ctrl+Q/Ctrl+C,
 piped stdin, completion). `jq` must be on PATH.
 
-The version lives in `Cargo.toml` and is reported by `--version` together with the git commit.
+The version lives in `Cargo.toml` and is reported by `--version` together with the git commit. `just bump 1.2.3` sets it, commits, tags `v1.2.3` and pushes both.
 Shell completions and the man page are generated: `jqplay completions zsh`, `jqplay man`.
