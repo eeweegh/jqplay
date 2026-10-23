@@ -141,6 +141,36 @@ fn save_writes_plain_result_text() {
 }
 
 #[test]
+fn saving_over_an_existing_file_needs_a_second_enter() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("result.json");
+    std::fs::write(&target, "old").unwrap();
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".count"]);
+    ctrl(&mut app, 's');
+    for _ in 0..20 {
+        press(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
+    }
+    type_text(&mut app, target.to_str().unwrap());
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert!(app.prompt.as_ref().is_some_and(|p| p.overwrite));
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "old");
+    // Editing the path disarms the confirmation.
+    press(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
+    assert!(app.prompt.as_ref().is_some_and(|p| !p.overwrite));
+    type_text(&mut app, "n");
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert!(app.prompt.is_some());
+    press(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
+    type_text(&mut app, "n");
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert!(app.prompt.as_ref().is_some_and(|p| p.overwrite));
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "old");
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert!(app.prompt.is_none());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "2\n");
+}
+
+#[test]
 fn nothing_to_save_without_results() {
     let mut app = app_with(Some(SAMPLE), &[]);
     focus_next(&mut app);
@@ -555,4 +585,76 @@ fn ctrl_z_requests_suspend_in_every_pane_and_mode() {
     ctrl(&mut app, 'z');
     assert!(app.take_suspend());
     assert_eq!(app.outcome(), None);
+}
+
+#[test]
+fn a_superseded_never_ending_filter_is_cancelled_and_replaced() {
+    use jqplay::app::App;
+    use jqplay::cli::Cli;
+    use jqplay::config::{Config, Settings};
+    use jqplay::job::execute;
+    use ratatui::crossterm::event::KeyEvent;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let cli = <Cli as clap::Parser>::parse_from([
+        "jqplay",
+        "--history-file",
+        "",
+        "--no-color",
+        "--filter",
+        "until(false; .)",
+    ]);
+    let mut app = App::new(&Settings::resolve(&cli, &Config::default()), Some(SAMPLE.into()));
+    let (tx, rx) = mpsc::channel();
+    let dispatch = |app: &mut App| {
+        for job in app.take_jobs() {
+            let tx = tx.clone();
+            std::thread::spawn(move || tx.send(execute(job)).unwrap());
+        }
+    };
+    dispatch(&mut app);
+    // Replace the filter while its jq is still spinning.
+    for _ in 0..20 {
+        app.handle(Event::Term(TermEvent::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))));
+    }
+    for c in ".count".chars() {
+        app.handle(Event::Term(TermEvent::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))));
+    }
+    app.tick(app.deadline().expect("typing sets the debounce"));
+    for _ in 0..20 {
+        dispatch(&mut app);
+        if render(&mut app, 90, 12).lines().any(|l| l.contains("│2")) {
+            return;
+        }
+        let reply = rx.recv_timeout(Duration::from_secs(10)).expect("the old jq was not stopped");
+        app.handle(Event::Reply(reply));
+    }
+    panic!("the new filter never ran");
+}
+
+#[test]
+fn dropping_the_app_stops_running_jq_processes() {
+    use jqplay::app::App;
+    use jqplay::cli::Cli;
+    use jqplay::config::{Config, Settings};
+    use jqplay::job::execute;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let cli =
+        <Cli as clap::Parser>::parse_from(["jqplay", "--history-file", "", "--filter", "until(false; .)"]);
+    let mut app = App::new(&Settings::resolve(&cli, &Config::default()), Some(SAMPLE.into()));
+    let (tx, rx) = mpsc::channel();
+    let jobs = app.take_jobs();
+    let count = jobs.len();
+    for job in jobs {
+        let tx = tx.clone();
+        std::thread::spawn(move || tx.send(execute(job)).unwrap());
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    drop(app);
+    for _ in 0..count {
+        rx.recv_timeout(Duration::from_secs(10)).expect("a jq outlived the app");
+    }
 }

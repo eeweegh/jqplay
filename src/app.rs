@@ -4,7 +4,7 @@ use crate::config::Settings;
 use crate::editor::LineEditor;
 use crate::history::FilterHistory;
 use crate::job::{Job, JobKind, JobResult, Reply};
-use crate::jq::Options;
+use crate::jq::{Cancel, Options};
 use crate::paths::expand_tilde;
 use crate::theme::Theme;
 use ratatui::crossterm::event::{
@@ -12,7 +12,9 @@ use ratatui::crossterm::event::{
     MouseEventKind,
 };
 use ratatui::layout::{Position, Rect};
-use std::path::PathBuf;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -192,6 +194,8 @@ pub struct Rects {
 #[derive(Debug)]
 pub struct Prompt {
     pub editor: LineEditor,
+    // Set once the path turned out to exist: the next Enter overwrites it.
+    pub overwrite: bool,
     text: String,
 }
 
@@ -229,7 +233,7 @@ pub struct App {
     pretty: Option<(u64, bool, crate::jq::Output)>,
     run: Option<(RunKey, crate::jq::Output)>,
     paths: Option<(u64, bool, Result<Vec<String>, String>)>,
-    inflight: [Option<(u64, JobKind)>; JobKind::SLOTS],
+    inflight: [Option<(u64, JobKind, Cancel)>; JobKind::SLOTS],
     outbox: Vec<Job>,
     outcome: Option<Outcome>,
 }
@@ -345,8 +349,28 @@ fn apply_edit_key(ed: &mut LineEditor, key: &KeyEvent, autopair: bool) -> Edited
     }
 }
 
+// Without `overwrite` an existing file (or a symlink to one) is left alone and reported as AlreadyExists.
+fn write_result(target: &Path, text: &str, overwrite: bool) -> std::io::Result<()> {
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if overwrite {
+        return std::fs::write(target, text);
+    }
+    OpenOptions::new().write(true).create_new(true).open(target)?.write_all(text.as_bytes())
+}
+
 fn error_doc(stderr: &str, fallback: &str) -> Document {
     Document::plain(if stderr.trim().is_empty() { fallback } else { stderr })
+}
+
+// Quitting must not leave a runaway jq behind.
+impl Drop for App {
+    fn drop(&mut self) {
+        for (_, _, cancel) in self.inflight.iter().flatten() {
+            cancel.cancel();
+        }
+    }
 }
 
 impl App {
@@ -437,9 +461,23 @@ impl App {
 
     fn want(&mut self, kind: JobKind) {
         let slot = kind.slot();
-        if self.inflight[slot].is_none() {
-            self.inflight[slot] = Some((self.generation, kind.clone()));
-            self.outbox.push(Job { generation: self.generation, json: Arc::clone(&self.json), kind });
+        match &self.inflight[slot] {
+            None => {
+                let cancel = Cancel::default();
+                self.inflight[slot] = Some((self.generation, kind.clone(), cancel.clone()));
+                self.outbox.push(Job {
+                    generation: self.generation,
+                    json: Arc::clone(&self.json),
+                    kind,
+                    cancel,
+                });
+            }
+            // The running job answers something no longer asked: stop it; its reply frees the slot and
+            // the current request goes out then.
+            Some((generation, running, cancel)) if (*generation, running) != (self.generation, &kind) => {
+                cancel.cancel();
+            }
+            Some(_) => {}
         }
     }
 
@@ -601,23 +639,27 @@ impl App {
             return self.status_message = "nothing to save (no valid results)".into();
         };
         let initial = self.last_save_path.as_deref().unwrap_or(DEFAULT_SAVE_PATH);
-        self.prompt = Some(Prompt { editor: LineEditor::new(initial), text });
+        self.prompt = Some(Prompt { editor: LineEditor::new(initial), overwrite: false, text });
     }
 
-    fn confirm_save(&mut self, prompt: &Prompt) {
+    // An existing file is only replaced after a second Enter on the same path.
+    fn confirm_save(&mut self) {
+        let Some(prompt) = self.prompt.as_mut() else { return };
         let path = prompt.editor.text().trim().to_string();
         let target = expand_tilde(&path);
-        let saved = target
-            .parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| std::fs::write(&target, &prompt.text));
-        self.status_message = match saved {
-            Ok(()) => {
-                self.last_save_path = Some(path.clone());
-                format!("saved to {path}")
+        match write_result(&target, &prompt.text, prompt.overwrite) {
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => prompt.overwrite = true,
+            saved => {
+                self.prompt = None;
+                self.status_message = match saved {
+                    Ok(()) => {
+                        self.last_save_path = Some(path.clone());
+                        format!("saved to {path}")
+                    }
+                    Err(e) => format!("save failed: {e}"),
+                };
             }
-            Err(e) => format!("save failed: {e}"),
-        };
+        }
     }
 
     // -- completion -------------------------------------------------------------
@@ -789,14 +831,11 @@ impl App {
 
     fn prompt_key(&mut self, key: &KeyEvent) {
         match key.code {
-            KeyCode::Enter => {
-                if let Some(prompt) = self.prompt.take() {
-                    self.confirm_save(&prompt);
-                }
-            }
+            KeyCode::Enter => self.confirm_save(),
             KeyCode::Esc => self.prompt = None,
             _ => {
                 if let Some(p) = &mut self.prompt {
+                    p.overwrite = false;
                     apply_edit_key(&mut p.editor, key, false);
                 }
             }

@@ -222,7 +222,9 @@ fn draw_prompt(frame: &mut Frame, app: &App, screen: Rect) {
         3,
     )
     .intersection(screen);
-    let block = block("save results to path", true, app);
+    let title =
+        if prompt.overwrite { "file exists: Enter overwrites, Esc cancels" } else { "save results to path" };
+    let block = block(title, true, app);
     let inner = block.inner(area);
     let offset = (prompt.editor.cursor() + 1).saturating_sub(usize::from(inner.width));
     frame.render_widget(Clear, area);

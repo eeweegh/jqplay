@@ -1,5 +1,7 @@
-use std::fs;
-use std::path::Path;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::path::{Path, PathBuf};
 
 pub const MAX_HISTORY: usize = 500;
 
@@ -89,12 +91,31 @@ impl FilterHistory {
     }
 }
 
+// Filters can embed secrets, so the file and any directory created for it are private to the user. The
+// write goes through a temporary file and a rename, so a crash never leaves a truncated history behind.
 fn write_entries(path: &Path, entries: &[String]) -> std::io::Result<()> {
+    // Writing through a symlink (e.g. a dotfiles-managed history) must keep the link.
+    let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        fs::DirBuilder::new().recursive(true).mode(0o700).create(parent)?;
     }
     let start = entries.len().saturating_sub(MAX_HISTORY);
-    fs::write(path, serde_json::to_string_pretty(&entries[start..])?)
+    let json = serde_json::to_string_pretty(&entries[start..])?;
+    let mut tmp = path.clone().into_os_string();
+    tmp.push(format!(".{}.tmp", std::process::id()));
+    let tmp = PathBuf::from(tmp);
+    let written = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)
+        .and_then(|mut file| file.write_all(json.as_bytes()).and_then(|()| file.sync_all()))
+        .and_then(|()| fs::rename(&tmp, &path));
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    written
 }
 
 #[cfg(test)]
@@ -154,6 +175,30 @@ mod tests {
             [".other", ".c", ".b", ".c-edited", ".a", ".mine", ""]
         );
         assert!(fs::read_to_string(&path).unwrap().starts_with("[\n  \""));
+    }
+
+    #[test]
+    fn history_is_private_and_leaves_no_temporary_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state/history");
+        FilterHistory::default().save(&path, ".a");
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(path.parent().unwrap()), 0o700);
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn saving_through_a_symlink_keeps_the_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        let link = dir.path().join("link");
+        fs::write(&real, r#"[".a"]"#).unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        FilterHistory::load(&link).save(&link, ".b");
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert_eq!(FilterHistory::load(&real).entries(), [".a", ".b", ""]);
     }
 
     #[test]

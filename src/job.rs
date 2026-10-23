@@ -1,4 +1,4 @@
-use crate::jq::{self, Options, Output};
+use crate::jq::{self, Cancel, Options, Output};
 use std::sync::Arc;
 
 // What to ask jq; at most one job per kind is in flight at a time.
@@ -28,10 +28,13 @@ pub struct Job {
     pub generation: u64,
     pub json: Arc<str>,
     pub kind: JobKind,
+    pub cancel: Cancel,
 }
 
 #[derive(Debug)]
 pub enum JobResult {
+    // Stopped because a newer request superseded it; carries nothing worth showing.
+    Cancelled,
     Output(Output),
     Paths(Result<Vec<String>, String>),
 }
@@ -44,11 +47,15 @@ pub struct Reply {
 }
 
 pub fn execute(job: Job) -> Reply {
+    let cancel = &job.cancel;
     let result = match &job.kind {
-        JobKind::Validate => JobResult::Output(jq::validate(&job.json)),
-        JobKind::Pretty { slurp } => JobResult::Output(jq::pretty(&job.json, *slurp)),
-        JobKind::Run { filter, options } => JobResult::Output(jq::run_filter(&job.json, filter, *options)),
-        JobKind::Paths { slurp } => JobResult::Paths(jq::paths(&job.json, *slurp)),
+        JobKind::Validate => JobResult::Output(jq::validate(&job.json, cancel)),
+        JobKind::Pretty { slurp } => JobResult::Output(jq::pretty(&job.json, *slurp, cancel)),
+        JobKind::Run { filter, options } => {
+            JobResult::Output(jq::run_filter(&job.json, filter, *options, cancel))
+        }
+        JobKind::Paths { slurp } => JobResult::Paths(jq::paths(&job.json, *slurp, cancel)),
     };
+    let result = if cancel.was_cancelled() { JobResult::Cancelled } else { result };
     Reply { generation: job.generation, kind: job.kind, result }
 }

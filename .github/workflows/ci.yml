@@ -1,8 +1,14 @@
 name: ci
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  schedule:
+    # advisories appear after a release, so re-check the lockfile weekly
+    - cron: "17 5 * * 1"
 
 jobs:
   check:
+    if: github.event_name != 'schedule'
     strategy:
       fail-fast: false
       matrix:
@@ -22,3 +28,11 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
       - run: cargo build --release --locked
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
