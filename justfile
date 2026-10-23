@@ -35,4 +35,4 @@ man:
     cargo run --quiet -- --man
 
 install:
-    cargo install --path . --locked
+    cargo install --path . --locked --root ${HOME}/.local
