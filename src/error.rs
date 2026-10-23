@@ -10,4 +10,6 @@ pub enum Error {
     ReadStdin(std::io::Error),
     #[error("invalid config {}: {message}", path.display())]
     Config { path: PathBuf, message: String },
+    #[error(transparent)]
+    Terminal(#[from] std::io::Error),
 }

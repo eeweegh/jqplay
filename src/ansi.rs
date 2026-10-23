@@ -86,11 +86,14 @@ pub fn apply_sgr(style: Style, params: &str) -> Style {
                 let color = match (p.get(i + 1), p.get(i + 2), p.get(i + 3), p.get(i + 4)) {
                     (Some(5), Some(&c), ..) => {
                         i += 2;
-                        Some(Color::Indexed(c as u8))
+                        u8::try_from(c).ok().map(Color::Indexed)
                     }
                     (Some(2), Some(&r), Some(&g), Some(&b)) => {
                         i += 4;
-                        Some(Color::Rgb(r as u8, g as u8, b as u8))
+                        match (u8::try_from(r), u8::try_from(g), u8::try_from(b)) {
+                            (Ok(r), Ok(g), Ok(b)) => Some(Color::Rgb(r, g, b)),
+                            _ => None,
+                        }
                     }
                     _ => None,
                 };

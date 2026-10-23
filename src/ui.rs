@@ -2,6 +2,7 @@ use crate::ansi::highlight_line;
 use crate::app::{App, Focus, MAX_VISIBLE_ROWS, Pane, SearchMode};
 use crate::jq::Options;
 use crate::theme::Theme;
+use crate::util::to_u16;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Position, Rect};
 use ratatui::style::{Modifier, Style};
@@ -75,12 +76,12 @@ fn draw_filter(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
     frame.render_widget(
-        Paragraph::new(lines).style(app.theme.text).scroll((voff as u16, hoff as u16)).block(block),
+        Paragraph::new(lines).style(app.theme.text).scroll((to_u16(voff), to_u16(hoff))).block(block),
         area,
     );
     if app.focus == Focus::Filter && app.prompt.is_none() {
-        let x = inner.x + (col + 2 - hoff.min(col + 2)) as u16;
-        let y = inner.y + (row - voff) as u16;
+        let x = inner.x + to_u16(col + 2 - hoff.min(col + 2));
+        let y = inner.y + to_u16(row - voff);
         frame.set_cursor_position(Position::new(
             x.min(inner.right().saturating_sub(1)),
             y.min(inner.bottom().saturating_sub(1)),
@@ -200,7 +201,7 @@ fn status_line(app: &App, width: u16) -> Line<'static> {
 
 fn draw_completion(frame: &mut Frame, app: &App, filter_area: Rect) {
     let screen = frame.area();
-    let rows = app.completion.filtered.len().min(MAX_VISIBLE_ROWS) as u16;
+    let rows = to_u16(app.completion.filtered.len().min(MAX_VISIBLE_ROWS));
     let width = (screen.width * 60 / 100).max(24).min(screen.width.saturating_sub(2));
     let area = Rect::new(filter_area.x + 2, filter_area.bottom(), width, rows + 2).intersection(screen);
     let list = List::new(app.completion.filtered.iter().map(String::as_str))
@@ -231,11 +232,11 @@ fn draw_prompt(frame: &mut Frame, app: &App, screen: Rect) {
     frame.render_widget(
         Paragraph::new(prompt.editor.text().to_string())
             .style(app.theme.text)
-            .scroll((0, offset as u16))
+            .scroll((0, to_u16(offset)))
             .block(block),
         area,
     );
-    frame.set_cursor_position(Position::new(inner.x + (prompt.editor.cursor() - offset) as u16, inner.y));
+    frame.set_cursor_position(Position::new(inner.x + to_u16(prompt.editor.cursor() - offset), inner.y));
 }
 
 #[cfg(test)]

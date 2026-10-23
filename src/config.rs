@@ -1,10 +1,11 @@
 use crate::cli::Cli;
 use crate::error::Error;
-use crate::jq::Options;
+use crate::jq::{DEFAULT_TIMEOUT, Options};
 use crate::paths::{DEFAULT_HISTORY_FILE, default_config_file, expand_tilde};
 use crate::theme::ThemeName;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 // Inputs above this many chars start with color off; Ctrl+G still overrides live.
 pub const LARGE_INPUT_THRESHOLD: usize = 200_000;
@@ -22,6 +23,7 @@ pub struct Config {
     pub mouse: Option<bool>,
     pub autopair: Option<bool>,
     pub autocomplete: Option<bool>,
+    pub timeout_secs: Option<u64>,
 }
 
 impl Config {
@@ -52,6 +54,7 @@ pub struct Settings {
     pub mouse: bool,
     pub autopair: bool,
     pub autocomplete: bool,
+    pub timeout: Duration,
     pub filter: Option<String>,
     pub file: Option<PathBuf>,
 }
@@ -85,6 +88,11 @@ impl Settings {
             mouse: !cli.no_mouse && config.mouse.unwrap_or(true),
             autopair: config.autopair.unwrap_or(true),
             autocomplete: config.autocomplete.unwrap_or(true),
+            timeout: match config.timeout_secs {
+                None => DEFAULT_TIMEOUT,
+                Some(0) => Duration::MAX,
+                Some(secs) => Duration::from_secs(secs),
+            },
             filter: cli.filter.clone(),
             file: cli.file.clone(),
         }
@@ -137,6 +145,14 @@ mod tests {
         assert!(Settings::resolve(&cli(&[]), &Config::default()).autocomplete);
         let cfg: Config = toml::from_str("autocomplete = false").unwrap();
         assert!(!Settings::resolve(&cli(&[]), &cfg).autocomplete);
+    }
+
+    #[test]
+    fn timeout_defaults_and_can_be_changed_or_disabled() {
+        let timeout = |toml: &str| Settings::resolve(&cli(&[]), &toml::from_str(toml).unwrap()).timeout;
+        assert_eq!(timeout(""), DEFAULT_TIMEOUT);
+        assert_eq!(timeout("timeout_secs = 5"), Duration::from_secs(5));
+        assert_eq!(timeout("timeout_secs = 0"), Duration::MAX);
     }
 
     #[test]

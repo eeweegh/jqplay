@@ -17,12 +17,13 @@ The filter pane is multi-line: Enter (also Alt+Enter, Ctrl+J) adds a line and th
 | Module | Role |
 | --- | --- |
 | `cli`, `config` | clap definitions; TOML config (`~/.config/jqplay/config.toml`) merged under the flags |
-| `jq`, `job` | jq subprocess runner and the job/reply types for the worker threads |
-| `app` | pure state machine: events in, jobs out (no I/O except history, reload, save) |
+| `jq`, `job` | jq subprocess runner (cancellable, with a timeout) and the job/reply types for the worker threads |
+| `app` | pure state machine: events in, jobs out (no I/O except history, reload, save); split into `jobs` (caches, in-flight bookkeeping), `keys`, `mouse`, `pane`, `complete` and `save` |
 | `ui`, `theme` | stateless ratatui rendering of `&mut App` |
 | `ansi` | SGR parser and the line-indexed `Document` that only parses visible rows |
 | `editor`, `completion`, `history` | filter line editing, path completion, history file |
 | `input`, `terminal`, `run` | stdin/tty handling, terminal modes, the event loop |
+| `util` | small numeric helpers (saturating `u16`, wrap-around stepping) |
 
 ## Development
 

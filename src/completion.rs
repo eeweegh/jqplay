@@ -51,7 +51,7 @@ impl Completion {
     pub fn step(&mut self, delta: isize) {
         let n = self.filtered.len();
         if n > 0 {
-            self.selected = (self.selected as isize + delta).rem_euclid(n as isize) as usize;
+            self.selected = crate::util::cycle(self.selected, delta, n);
         }
     }
 

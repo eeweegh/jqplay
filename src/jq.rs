@@ -6,9 +6,9 @@ use std::thread;
 use std::time::Duration;
 
 // A jq run that takes longer than this is killed, so a filter that never ends cannot hold its slot forever.
-pub const JOB_TIMEOUT: Duration = Duration::from_secs(60);
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 
-// Path-enumeration expression shared with generic/bin/jqpaths so completions match that tool.
+// Lists every path in the input as a jq-style accessor (`.a.b`, `.a[]`, `.a."odd key"`), for completion.
 pub const JQPATHS_EXPR: &str = r#"
 [
   path(..)  |
@@ -30,16 +30,36 @@ pub struct Options {
     pub color: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+// How a jq run ended; for everything but `Exited` the message is in `Output::stderr`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    Exited(i32),
+    // Ended by a signal nobody here sent.
+    Killed,
+    SpawnFailed,
+    TimedOut,
+    // Stopped because a newer request superseded it, or because the app is quitting.
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Output {
-    pub code: i32,
+    pub status: Status,
     pub stdout: String,
     pub stderr: String,
 }
 
 impl Output {
     pub fn ok(&self) -> bool {
-        self.code == 0
+        self.status == Status::Exited(0)
+    }
+
+    pub fn cancelled(&self) -> bool {
+        self.status == Status::Cancelled
+    }
+
+    fn failed(status: Status, message: String) -> Self {
+        Self { status, stdout: String::new(), stderr: message }
     }
 }
 
@@ -55,17 +75,27 @@ struct Running {
     stop: Option<Stop>,
 }
 
-// Lets whoever started a jq run stop it: a request that supersedes it, quitting, or the timeout watchdog.
-#[derive(Debug, Clone, Default)]
-pub struct Cancel(Arc<Mutex<Running>>);
+// Belongs to one jq run and lets whoever started it stop it: a request that supersedes it, quitting, or the
+// timeout watchdog. Carries the run's time limit.
+#[derive(Debug, Clone)]
+pub struct Handle {
+    running: Arc<Mutex<Running>>,
+    timeout: Duration,
+}
 
-impl Cancel {
-    pub fn cancel(&self) {
-        self.stop(Stop::Cancelled);
+impl Default for Handle {
+    fn default() -> Self {
+        Self::new(DEFAULT_TIMEOUT)
+    }
+}
+
+impl Handle {
+    pub fn new(timeout: Duration) -> Self {
+        Self { running: Arc::default(), timeout }
     }
 
-    pub fn was_cancelled(&self) -> bool {
-        self.lock().stop == Some(Stop::Cancelled)
+    pub fn cancel(&self) {
+        self.stop(Stop::Cancelled);
     }
 
     fn stop(&self, why: Stop) {
@@ -86,7 +116,7 @@ impl Cancel {
     }
 
     fn lock(&self) -> MutexGuard<'_, Running> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        self.running.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -110,7 +140,7 @@ pub fn build_argv(filter: &str, options: Options) -> Vec<String> {
 }
 
 // Feeds stdin from a thread so large inputs and outputs cannot deadlock on full pipes.
-fn run(args: &[String], input: &str, cancel: &Cancel, timeout: Duration) -> Output {
+fn run(args: &[String], input: &str, handle: &Handle) -> Output {
     let spawned = Command::new("jq")
         .args(args)
         .stdin(Stdio::piped())
@@ -119,17 +149,15 @@ fn run(args: &[String], input: &str, cancel: &Cancel, timeout: Duration) -> Outp
         .spawn();
     let mut child = match spawned {
         Ok(child) => child,
-        Err(e) => {
-            return Output { code: -1, stdout: String::new(), stderr: format!("failed to run jq: {e}") };
-        }
+        Err(e) => return Output::failed(Status::SpawnFailed, format!("failed to run jq: {e}")),
     };
     let mut stdin = child.stdin.take().expect("piped stdin");
     let mut stdout = child.stdout.take().expect("piped stdout");
     let mut stderr = child.stderr.take().expect("piped stderr");
-    cancel.attach(child);
+    handle.attach(child);
     // Dropping `done` wakes the watchdog, which then ends without killing anything.
     let (done, finished) = mpsc::channel::<()>();
-    let watchdog = cancel.clone();
+    let (watchdog, timeout) = (handle.clone(), handle.timeout);
     let (out_buf, err_buf) = thread::scope(|scope| {
         scope.spawn(move || {
             if finished.recv_timeout(timeout) == Err(RecvTimeoutError::Timeout) {
@@ -147,14 +175,16 @@ fn run(args: &[String], input: &str, cancel: &Cancel, timeout: Duration) -> Outp
         drop(done);
         (out_buf, err_reader.join().unwrap_or_default())
     });
-    let child = cancel.lock().child.take();
-    let code = child.and_then(|mut c| c.wait().ok()).and_then(|s| s.code()).unwrap_or(-1);
-    let stopped = |stderr: String| Output { code: -1, stdout: String::new(), stderr };
-    match cancel.lock().stop {
-        Some(Stop::Cancelled) => stopped("jq was cancelled".into()),
-        Some(Stop::TimedOut) => stopped(format!("jq timed out after {}s", timeout.as_secs())),
-        None => Output {
-            code,
+    let child = handle.lock().child.take();
+    let exit = child.and_then(|mut c| c.wait().ok()).and_then(|s| s.code());
+    let stop = handle.lock().stop;
+    match (stop, exit) {
+        (Some(Stop::Cancelled), _) => Output::failed(Status::Cancelled, "jq was cancelled".into()),
+        (Some(Stop::TimedOut), _) => {
+            Output::failed(Status::TimedOut, format!("jq timed out after {}s", timeout.as_secs()))
+        }
+        (None, exit) => Output {
+            status: exit.map_or(Status::Killed, Status::Exited),
             stdout: String::from_utf8_lossy(&out_buf).into_owned(),
             stderr: String::from_utf8_lossy(&err_buf).into_owned(),
         },
@@ -165,27 +195,28 @@ fn run(args: &[String], input: &str, cancel: &Cancel, timeout: Duration) -> Outp
 const COUNT_EXPR: &str = r#"if length == 1 and (.[0] | type) == "array" then .[0] | length else length end"#;
 
 // Succeeds iff the input parses; stdout then holds the item count.
-pub fn validate(json: &str, cancel: &Cancel) -> Output {
-    run(&["-e".into(), "-s".into(), COUNT_EXPR.into()], json, cancel, JOB_TIMEOUT)
+pub fn validate(json: &str, handle: &Handle) -> Output {
+    run(&["-e".into(), "-s".into(), COUNT_EXPR.into()], json, handle)
 }
 
-pub fn run_filter(json: &str, filter: &str, options: Options, cancel: &Cancel) -> Output {
-    run(&build_argv(filter, options), json, cancel, JOB_TIMEOUT)
+pub fn run_filter(json: &str, filter: &str, options: Options, handle: &Handle) -> Output {
+    run(&build_argv(filter, options), json, handle)
 }
 
-pub fn pretty(json: &str, slurp: bool, cancel: &Cancel) -> Output {
-    run_filter(json, ".", Options { slurp, color: true, ..Options::default() }, cancel)
+pub fn pretty(json: &str, slurp: bool, handle: &Handle) -> Output {
+    run_filter(json, ".", Options { slurp, color: true, ..Options::default() }, handle)
 }
 
-pub fn paths(json: &str, slurp: bool, cancel: &Cancel) -> Result<Vec<String>, String> {
+// Every distinct path in the input; the failing run is returned as is.
+pub fn paths(json: &str, slurp: bool, handle: &Handle) -> Result<Vec<String>, Output> {
     let mut args = vec!["-r".to_string()];
     if slurp {
         args.push("-s".into());
     }
     args.push(JQPATHS_EXPR.into());
-    let out = run(&args, json, cancel, JOB_TIMEOUT);
+    let out = run(&args, json, handle);
     if !out.ok() {
-        return Err(out.stderr);
+        return Err(out);
     }
     let mut seen = std::collections::HashSet::new();
     Ok(out.stdout.lines().filter(|l| seen.insert(*l)).map(str::to_string).collect())
@@ -207,9 +238,9 @@ mod tests {
     fn a_filter_starting_with_a_dash_is_not_an_option() {
         assert_eq!(build_argv("-1", Options::default()), ["-M", " -1"]);
         if is_available() {
-            let out = run_filter("{}", "-h", Options::default(), &Cancel::default());
+            let out = run_filter("{}", "-h", Options::default(), &Handle::default());
             assert!(!out.stdout.contains("Usage"), "{}", out.stdout);
-            assert_eq!(run_filter("5", "-1 + 3", Options::default(), &Cancel::default()).stdout, "2\n");
+            assert_eq!(run_filter("5", "-1 + 3", Options::default(), &Handle::default()).stdout, "2\n");
         }
     }
 
@@ -218,26 +249,35 @@ mod tests {
         if !is_available() {
             return;
         }
-        let cancel = Cancel::default();
-        let canceller = cancel.clone();
+        let handle = Handle::default();
+        let canceller = handle.clone();
         let stopper = thread::spawn(move || {
             thread::sleep(Duration::from_millis(200));
             canceller.cancel();
         });
-        let out = run_filter("1", "until(false; .)", Options::default(), &cancel);
+        let out = run_filter("1", "until(false; .)", Options::default(), &handle);
         stopper.join().unwrap();
-        assert!(!out.ok() && cancel.was_cancelled(), "{out:?}");
+        assert!(out.cancelled(), "{out:?}");
 
-        let cancel = Cancel::default();
-        let args = build_argv("until(false; .)", Options::default());
-        let out = run(&args, "1", &cancel, Duration::from_millis(200));
-        assert!(!out.ok() && !cancel.was_cancelled());
+        let handle = Handle::new(Duration::from_millis(200));
+        let out = run_filter("1", "until(false; .)", Options::default(), &handle);
+        assert_eq!(out.status, Status::TimedOut);
         assert_eq!(out.stderr, "jq timed out after 0s");
 
         // A stop requested before the run starts is honoured too.
-        let cancel = Cancel::default();
-        cancel.cancel();
-        assert!(!run_filter("1", "until(false; .)", Options::default(), &cancel).ok());
+        let handle = Handle::default();
+        handle.cancel();
+        assert!(run_filter("1", "until(false; .)", Options::default(), &handle).cancelled());
+    }
+
+    #[test]
+    fn exit_codes_are_reported() {
+        if !is_available() {
+            return;
+        }
+        let out = run_filter("{}", ".a | error(\"boom\")", Options::default(), &Handle::default());
+        assert_eq!(out.status, Status::Exited(5));
+        assert!(out.stderr.contains("boom"));
     }
 
     #[test]
@@ -245,13 +285,13 @@ mod tests {
         if !is_available() {
             return;
         }
-        assert!(validate("{\"a\":1}", &Cancel::default()).ok());
-        assert!(!validate("{oops", &Cancel::default()).ok());
+        assert!(validate("{\"a\":1}", &Handle::default()).ok());
+        assert!(!validate("{oops", &Handle::default()).ok());
         let out = run_filter(
             "{\"a\":[1,2]}",
             ".a[]",
             Options { compact: true, ..Options::default() },
-            &Cancel::default(),
+            &Handle::default(),
         );
         assert_eq!(out.stdout, "1\n2\n");
     }
@@ -264,7 +304,7 @@ mod tests {
         for (input, count) in
             [("[1,2,3]", "3"), ("{\"a\":1}", "1"), ("{\"a\":1}\n{\"b\":2}", "2"), ("[]", "0"), ("null", "1")]
         {
-            let out = validate(input, &Cancel::default());
+            let out = validate(input, &Handle::default());
             assert!(out.ok(), "{input}: {}", out.stderr);
             assert_eq!(out.stdout.trim(), count, "{input}");
         }
@@ -275,7 +315,7 @@ mod tests {
         if !is_available() {
             return;
         }
-        let got = paths("{\"a\":{\"b\":1}}\n{\"a\":{\"b\":2}}", false, &Cancel::default()).unwrap();
+        let got = paths("{\"a\":{\"b\":1}}\n{\"a\":{\"b\":2}}", false, &Handle::default()).unwrap();
         assert!(got.contains(&".a".to_string()));
         assert_eq!(got.iter().filter(|p| p.as_str() == ".a.b").count(), 1);
     }

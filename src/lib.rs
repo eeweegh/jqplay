@@ -1,31 +1,35 @@
 //! jqplay: a terminal UI for exploring JSON with jq.
 
-pub mod ansi;
+#[cfg(not(unix))]
+compile_error!("jqplay needs a Unix terminal: it uses termios, /dev/tty and job-control signals");
+
+mod ansi;
 pub mod app;
 pub mod cli;
-pub mod completion;
+mod completion;
 pub mod config;
-pub mod editor;
-pub mod error;
+mod editor;
+mod error;
 pub mod generate;
 pub mod history;
-pub mod input;
+mod input;
 pub mod job;
 pub mod jq;
-pub mod paths;
-pub mod run;
-pub mod terminal;
-pub mod theme;
+mod paths;
+mod run;
+mod terminal;
+mod theme;
 pub mod ui;
+mod util;
 
 use app::{App, Outcome};
 use cli::Cli;
 use config::{Config, Settings};
-use error::Error;
+pub use error::Error;
 
-pub fn run(cli: &Cli) -> anyhow::Result<Outcome> {
+pub fn run(cli: &Cli) -> Result<Outcome, Error> {
     if !jq::is_available() {
-        return Err(Error::JqMissing.into());
+        return Err(Error::JqMissing);
     }
     let config = Config::load(cli.config.as_deref())?;
     let settings = Settings::resolve(cli, &config);

@@ -52,7 +52,7 @@ Readline editing (filter pane only; overrides Ctrl+Y save there; use Ctrl+S):
   Ctrl+T            transpose two characters
 
 Config file (TOML, optional): ~/.config/jqplay/config.toml with keys theme,
-raw, compact, sort_keys, slurp, color, history_file, mouse, autopair (auto-close\nbrackets and quotes in the filter line, default true). Flags override it.
+raw, compact, sort_keys, slurp, color, history_file, mouse, autocomplete, autopair (auto-close\nbrackets and quotes in the filter line, default true) and timeout_secs (stop a jq run after this many\nseconds, default 60, 0 = never). Flags override it.
 
 Examples:
   jqplay data.json

@@ -1,4 +1,4 @@
-use crate::jq::{self, Cancel, Options, Output};
+use crate::jq::{self, Handle, Options, Output};
 use std::sync::Arc;
 
 // What to ask jq; at most one job per kind is in flight at a time.
@@ -28,15 +28,13 @@ pub struct Job {
     pub generation: u64,
     pub json: Arc<str>,
     pub kind: JobKind,
-    pub cancel: Cancel,
+    pub handle: Handle,
 }
 
 #[derive(Debug)]
 pub enum JobResult {
-    // Stopped because a newer request superseded it; carries nothing worth showing.
-    Cancelled,
     Output(Output),
-    Paths(Result<Vec<String>, String>),
+    Paths(Result<Vec<String>, Output>),
 }
 
 #[derive(Debug)]
@@ -46,16 +44,25 @@ pub struct Reply {
     pub result: JobResult,
 }
 
-pub fn execute(job: Job) -> Reply {
-    let cancel = &job.cancel;
-    let result = match &job.kind {
-        JobKind::Validate => JobResult::Output(jq::validate(&job.json, cancel)),
-        JobKind::Pretty { slurp } => JobResult::Output(jq::pretty(&job.json, *slurp, cancel)),
-        JobKind::Run { filter, options } => {
-            JobResult::Output(jq::run_filter(&job.json, filter, *options, cancel))
+impl JobResult {
+    // A superseded or abandoned run says nothing about the current state and must not be cached.
+    pub fn cancelled(&self) -> bool {
+        match self {
+            Self::Output(out) => out.cancelled(),
+            Self::Paths(res) => res.as_ref().is_err_and(Output::cancelled),
         }
-        JobKind::Paths { slurp } => JobResult::Paths(jq::paths(&job.json, *slurp, cancel)),
+    }
+}
+
+pub fn execute(job: Job) -> Reply {
+    let handle = &job.handle;
+    let result = match &job.kind {
+        JobKind::Validate => JobResult::Output(jq::validate(&job.json, handle)),
+        JobKind::Pretty { slurp } => JobResult::Output(jq::pretty(&job.json, *slurp, handle)),
+        JobKind::Run { filter, options } => {
+            JobResult::Output(jq::run_filter(&job.json, filter, *options, handle))
+        }
+        JobKind::Paths { slurp } => JobResult::Paths(jq::paths(&job.json, *slurp, handle)),
     };
-    let result = if cancel.was_cancelled() { JobResult::Cancelled } else { result };
     Reply { generation: job.generation, kind: job.kind, result }
 }
