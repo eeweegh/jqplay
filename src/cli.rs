@@ -1,5 +1,5 @@
 use crate::theme::ThemeName;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 use std::path::PathBuf;
 
@@ -60,7 +60,7 @@ Examples:
   jqplay data.json --filter '.items[] | select(.active)'";
 
 #[derive(Debug, Parser)]
-#[command(name = "jqplay", version = VERSION, about = "A terminal UI for exploring JSON with jq, inspired by jqplay.org.", after_help = AFTER_HELP)]
+#[command(name = "jqplay", args_conflicts_with_subcommands = true, version = VERSION, about = "A terminal UI for exploring JSON with jq, inspired by jqplay.org.", after_help = AFTER_HELP)]
 pub struct Cli {
     /// JSON file to preload (omit to read from stdin, if piped)
     pub file: Option<PathBuf>,
@@ -97,10 +97,17 @@ pub struct Cli {
     /// Read settings from this TOML file instead of the default location
     #[arg(long, value_name = "PATH")]
     pub config: Option<PathBuf>,
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Command {
     /// Print a shell completion script and exit
-    #[arg(long, value_name = "SHELL", hide = true)]
-    pub completions: Option<Shell>,
+    Completions {
+        /// Shell to generate the script for
+        shell: Shell,
+    },
     /// Print the man page (roff) and exit
-    #[arg(long, hide = true)]
-    pub man: bool,
+    Man,
 }

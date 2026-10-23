@@ -1,3 +1,5 @@
+root := env("HOME") / ".local"
+
 default: check
 
 check: fmt-check lint test
@@ -29,10 +31,10 @@ build:
     cargo build --release --locked
 
 completions shell="zsh":
-    cargo run --quiet -- --completions {{shell}}
+    cargo run --quiet -- completions {{shell}}
 
 man:
-    cargo run --quiet -- --man
+    cargo run --quiet -- man
 
 install:
-    cargo install --path . --locked --root ${HOME}/.local
+    cargo install --path . --locked --root {{root}}

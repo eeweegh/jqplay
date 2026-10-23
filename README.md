@@ -36,4 +36,4 @@ synchronously), `tests/cli.rs` (binary behavior) and `tests/pty.rs` (a real pty:
 piped stdin, completion). `jq` must be on PATH.
 
 The version lives in `Cargo.toml` and is reported by `--version` together with the git commit.
-Shell completions and the man page are generated: `jqplay --completions zsh`, `jqplay --man`.
+Shell completions and the man page are generated: `jqplay completions zsh`, `jqplay man`.

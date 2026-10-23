@@ -1,20 +1,23 @@
 use clap::Parser;
 use jqplay::app::Outcome;
-use jqplay::cli::Cli;
+use jqplay::cli::{Cli, Command};
 use std::io::stdout;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    if let Some(shell) = cli.completions {
-        jqplay::generate::completions(shell, &mut stdout());
-        return ExitCode::SUCCESS;
-    }
-    if cli.man {
-        return match jqplay::generate::man_page(&mut stdout()) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => fail(&e),
-        };
+    match cli.command {
+        Some(Command::Completions { shell }) => {
+            jqplay::generate::completions(shell, &mut stdout());
+            return ExitCode::SUCCESS;
+        }
+        Some(Command::Man) => {
+            return match jqplay::generate::man_page(&mut stdout()) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => fail(&e),
+            };
+        }
+        None => {}
     }
     match jqplay::run(&cli) {
         Ok(Outcome::Clean(filter)) => {

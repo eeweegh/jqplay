@@ -57,10 +57,16 @@ fn missing_jq_is_reported() {
 
 #[test]
 fn completions_and_man_page_are_generated() {
-    let out = jqplay().args(["--completions", "zsh"]).output().unwrap();
+    let out = jqplay().args(["completions", "zsh"]).output().unwrap();
     assert!(String::from_utf8(out.stdout).unwrap().contains("#compdef jqplay"));
-    let out = jqplay().arg("--man").output().unwrap();
+    let out = jqplay().arg("man").output().unwrap();
     assert!(String::from_utf8(out.stdout).unwrap().contains(".TH jqplay"));
+}
+
+#[test]
+fn old_generator_flags_are_rejected() {
+    assert!(!jqplay().arg("--man").output().unwrap().status.success());
+    assert!(!jqplay().args(["--completions", "zsh"]).output().unwrap().status.success());
 }
 
 #[test]
