@@ -68,7 +68,7 @@ fn run_piped(mut cmd: Command, stdin: &[u8]) -> std::process::Output {
         .spawn()
         .unwrap();
     let mut pipe = child.stdin.take().unwrap();
-    pipe.write_all(stdin).unwrap();
+    let _ = pipe.write_all(stdin); // the child may exit without reading (file argument)
     drop(pipe);
     child.wait_with_output().unwrap()
 }
