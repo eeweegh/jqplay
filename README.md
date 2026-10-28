@@ -9,7 +9,7 @@ cat data.json | jqplay
 jqplay data.json --filter '.items[] | select(.active)'
 ```
 
-`jqplay --help` lists every key binding. `q` (JSON/Result panes) or Ctrl+Q (anywhere) accepts and prints `jq '<filter>'`; Ctrl+C aborts. Empty input (empty stdin or file) exits silently with status 0.
+`jqplay --help` lists every key binding. `q` (JSON/Result panes) or Ctrl+Q (anywhere) accepts and prints `jq '<filter>'`; Ctrl+C aborts. Empty input (empty stdin or file) exits silently with status 0. When stdout is not a terminal (e.g. `cat data.json | jqplay | less`), jqplay shows no UI and copies its input to stdout unchanged.
 The filter pane is multi-line: Enter (also Alt+Enter, Ctrl+J) adds a line and the pane grows with it.
 
 ## Layout of the code

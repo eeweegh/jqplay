@@ -21,6 +21,7 @@ Layout:
   stdin, or Ctrl+F. On accepting (q in the JSON/Result panes, Ctrl+Q anywhere) the current filter is printed to
   stdout as: jq '<filter>'
   Empty input (empty or whitespace-only stdin or file) exits at once, silently, with status 0.
+  When stdout is not a terminal (a pipe or file), jqplay opens no UI and copies its input to stdout unchanged.
 
 Global keybindings:
   Tab / Shift+Tab   switch focus between panes (next / previous)

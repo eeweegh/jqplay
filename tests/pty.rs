@@ -175,6 +175,22 @@ fn alt_enter_inserts_a_newline_in_a_real_terminal() {
     s.expect("| .b'").unwrap();
 }
 
+#[test]
+fn empty_stdin_exits_silently_in_a_terminal() {
+    let mut s = spawn(&[], Some(" "));
+    let rest = s.expect(Eof).unwrap();
+    assert!(String::from_utf8_lossy(rest.as_bytes()).trim().is_empty());
+}
+
+#[test]
+fn missing_jq_is_reported_in_a_terminal() {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_jqplay"));
+    cmd.env("PATH", "/nonexistent");
+    let mut s = start(cmd, &[]);
+    s.expect("'jq' is required but was not found on PATH").unwrap();
+    s.expect(Eof).unwrap();
+}
+
 // Whether a jq process whose command line contains `marker` is running.
 fn jq_running(marker: &str) -> bool {
     Command::new("pgrep").args(["-f", &format!("jq .*{marker}")]).output().is_ok_and(|o| o.status.success())

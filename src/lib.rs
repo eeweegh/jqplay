@@ -26,13 +26,19 @@ use app::{App, Outcome};
 use cli::Cli;
 use config::{Config, Settings};
 pub use error::Error;
+use std::io::IsTerminal;
 
 pub fn run(cli: &Cli) -> Result<Outcome, Error> {
+    let config = Config::load(cli.config.as_deref())?;
+    let settings = Settings::resolve(cli, &config);
+    // Not a terminal (a pipe or file): there is nothing to draw on, so behave like `cat`.
+    if !std::io::stdout().is_terminal() {
+        input::passthrough(settings.file.as_deref())?;
+        return Ok(Outcome::NoInput);
+    }
     if !jq::is_available() {
         return Err(Error::JqMissing);
     }
-    let config = Config::load(cli.config.as_deref())?;
-    let settings = Settings::resolve(cli, &config);
     let json = input::load_initial_json(settings.file.as_deref())?;
     if json.as_deref().is_some_and(|j| j.trim().is_empty()) {
         return Ok(Outcome::NoInput);

@@ -8,6 +8,8 @@ pub enum Error {
     ReadInput { path: PathBuf, source: std::io::Error },
     #[error("could not read stdin: {0}")]
     ReadStdin(std::io::Error),
+    #[error("could not write stdout: {0}")]
+    WriteOutput(std::io::Error),
     #[error("invalid config {}: {message}", path.display())]
     Config { path: PathBuf, message: String },
     #[error(transparent)]
