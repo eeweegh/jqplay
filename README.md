@@ -9,6 +9,17 @@ cat data.json | jqplay
 jqplay data.json --filter '.items[] | select(.active)'
 ```
 
+## Install
+
+Prebuilt binaries (macOS Apple Silicon, Linux x86_64 static) are attached to each [GitHub release](https://github.com/eeweegh/jqplay/releases). `jq` must be on PATH.
+
+```
+gh release download --repo eeweegh/jqplay -p '*linux-musl.tar.gz'   # or '*apple-darwin.tar.gz'
+tar xzf jqplay-v*.tar.gz && install jqplay-v*/jqplay ~/.local/bin/
+```
+
+Or build from source: `just install`.
+
 `jqplay --help` lists every key binding. `q` (JSON/Result panes) or Ctrl+Q (anywhere) accepts and prints `jq '<filter>'`; Ctrl+C aborts. Empty input (empty stdin or file) exits silently with status 0. When stdout is not a terminal (e.g. `cat data.json | jqplay | less`), jqplay shows no UI and copies its input to stdout unchanged.
 The filter pane is multi-line: Enter (also Alt+Enter, Ctrl+J) adds a line and the pane grows with it.
 
