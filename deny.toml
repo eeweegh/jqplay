@@ -1,0 +1,7 @@
+[advisories]
+ignore = [
+    # pin-utils is unmaintained (no safe upgrade). It is only reachable via the
+    # dev-dependency expectrl -> nix 0.26, so it is not shipped in the binary.
+    # Revisit when expectrl moves to a newer nix.
+    "RUSTSEC-2026-0441",
+]
