@@ -1,6 +1,7 @@
 use super::keys::is_plain_char;
 use crate::ansi::{Document, Match};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::layout::Rect;
 
 const WHEEL_STEP: usize = 3;
 
@@ -26,6 +27,8 @@ pub struct Pane {
     pub scroll_x: usize,
     pub view_h: usize,
     pub view_w: usize,
+    // The one-column scrollbar track, set while drawn (only when the content overflows the pane).
+    pub bar: Option<Rect>,
     pub search: Option<Search>,
 }
 
@@ -116,14 +119,24 @@ impl Pane {
         match code {
             KeyCode::Up => self.scroll_y = self.scroll_y.saturating_sub(1),
             KeyCode::Down => self.scroll_y += 1,
-            KeyCode::PageUp => self.scroll_y = self.scroll_y.saturating_sub(page),
-            KeyCode::PageDown => self.scroll_y += page,
+            KeyCode::PageUp | KeyCode::Char('b') => self.scroll_y = self.scroll_y.saturating_sub(page),
+            KeyCode::PageDown | KeyCode::Char(' ') => self.scroll_y += page,
             KeyCode::Home => (self.scroll_y, self.scroll_x) = (0, 0),
             KeyCode::End => self.scroll_y = usize::MAX,
             KeyCode::Left => self.scroll_x = self.scroll_x.saturating_sub(4),
             KeyCode::Right => self.scroll_x += 4,
             _ => {}
         }
+    }
+
+    // Maps a row on the scrollbar track to a scroll position (the top of the track is the top of the text,
+    // the bottom of the track the end), so dragging the thumb follows the pointer.
+    pub(super) fn scroll_to_bar_row(&mut self, row: u16) {
+        let Some(bar) = self.bar else { return };
+        let max = self.doc.len().saturating_sub(self.view_h);
+        let span = usize::from(bar.height.saturating_sub(1)).max(1);
+        let offset = usize::from(row.saturating_sub(bar.y)).min(span);
+        self.scroll_y = offset * max / span;
     }
 
     pub(super) fn wheel(&mut self, down: bool) {

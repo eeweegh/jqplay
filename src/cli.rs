@@ -15,8 +15,8 @@ Layout:
   +------------------------------+---------------------------+
   |     JSON Input (left)        |      Result (right)       |
   +------------------------------+---------------------------+
-  Each pane scrolls independently (arrows, PageUp/PageDown, Home/End, mouse
-  wheel). In JSON Input and Result, / starts an incremental search of that pane (smart-case; Enter
+  Each pane scrolls independently (arrows, PageUp/PageDown or b/Space, Home/End,
+  mouse wheel, dragging the scrollbar). In JSON Input and Result, / starts an incremental search of that pane (smart-case; Enter
   keeps it, n / N jump to the next / previous match, Esc ends it). They are view-only; load JSON via a file argument,
   stdin, or Ctrl+F. On accepting (q in the JSON/Result panes, Ctrl+Q anywhere) the current filter is printed to
   stdout as: jq '<filter>'

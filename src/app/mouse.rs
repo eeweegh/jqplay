@@ -19,6 +19,22 @@ impl App {
         rows.contains(&at.y) && at.x + 2 >= results.x && at.x <= results.x + 1
     }
 
+    // The pane whose scrollbar track is under `at`.
+    fn bar_at(&self, at: Position) -> Option<Focus> {
+        [(Focus::Json, &self.json_pane), (Focus::Results, &self.results_pane)]
+            .into_iter()
+            .find(|(_, p)| p.bar.is_some_and(|b| b.contains(at)))
+            .map(|(f, _)| f)
+    }
+
+    fn drag_bar(&mut self, row: u16) {
+        match self.dragging_bar {
+            Some(Focus::Json) => self.json_pane.scroll_to_bar_row(row),
+            Some(Focus::Results) => self.results_pane.scroll_to_bar_row(row),
+            _ => {}
+        }
+    }
+
     pub(super) fn drag_divider(&mut self, column: u16) {
         let lower = self.rects.json.union(self.rects.results);
         self.split_pct = split_for_column(column, lower);
@@ -37,10 +53,24 @@ impl App {
         .into_iter()
         .find(|(_, r)| r.contains(at))
         .map(|(f, _)| f);
+        let bar = self.bar_at(at);
         match (mouse.kind, target) {
+            (MouseEventKind::Down(MouseButton::Left), _) if bar.is_some() => {
+                self.dragging_bar = bar;
+                if let Some(f) = bar.filter(|&f| f != self.focus) {
+                    self.set_focus(f);
+                }
+                self.drag_bar(at.y);
+            }
+            (MouseEventKind::Drag(MouseButton::Left), _) if self.dragging_bar.is_some() => {
+                self.drag_bar(at.y);
+            }
             (MouseEventKind::Down(MouseButton::Left), _) if self.on_divider(at) => self.dragging = true,
             (MouseEventKind::Drag(MouseButton::Left), _) if self.dragging => self.drag_divider(at.x),
-            (MouseEventKind::Up(MouseButton::Left), _) => self.dragging = false,
+            (MouseEventKind::Up(MouseButton::Left), _) => {
+                self.dragging = false;
+                self.dragging_bar = None;
+            }
             (MouseEventKind::Down(MouseButton::Left), Some(f)) if f != self.focus => self.set_focus(f),
             (MouseEventKind::ScrollUp | MouseEventKind::ScrollDown, Some(f)) => {
                 let down = mouse.kind == MouseEventKind::ScrollDown;

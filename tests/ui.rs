@@ -479,6 +479,45 @@ fn long_doc() -> String {
 }
 
 #[test]
+fn space_and_b_page_the_focused_pane() {
+    let mut app = app_with(Some(&long_doc()), &["--filter", ".[]"]);
+    render(&mut app, 80, 24);
+    focus_next(&mut app);
+    assert_eq!(app.focus, Focus::Json);
+    let page = app.json_pane.view_h - 1;
+    type_text(&mut app, " ");
+    assert_eq!(app.json_pane.scroll_y, page);
+    type_text(&mut app, " ");
+    assert_eq!(app.json_pane.scroll_y, 2 * page);
+    type_text(&mut app, "b");
+    assert_eq!(app.json_pane.scroll_y, page);
+    assert_eq!(app.results_pane.scroll_y, 0);
+}
+
+#[test]
+fn dragging_the_scrollbar_thumb_scrolls_the_pane() {
+    let mut app = app_with(Some(&long_doc()), &["--filter", ".[]"]);
+    render(&mut app, 100, 24);
+    let bar = app.results_pane.bar.expect("results overflow, so the scrollbar is drawn");
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), bar.x, bar.y);
+    assert_eq!(app.focus, Focus::Results);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), bar.x, bar.y + bar.height - 1);
+    render(&mut app, 100, 24);
+    let max = app.results_pane.doc.len() - app.results_pane.view_h;
+    assert_eq!(app.results_pane.scroll_y, max);
+    // Dragging past the end of the track stays clamped; the json pane has its own bar.
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), bar.x, bar.y + bar.height + 5);
+    assert_eq!(app.results_pane.scroll_y, max);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), bar.x, bar.y);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), bar.x, bar.y);
+    assert_eq!(app.results_pane.scroll_y, max);
+    let json_bar = app.json_pane.bar.expect("json overflows too");
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), json_bar.x, json_bar.y + json_bar.height - 1);
+    assert!(app.json_pane.scroll_y > 0);
+    assert_eq!(app.rects.json.width, 50, "grabbing the json bar must not start a divider drag");
+}
+
+#[test]
 fn search_jumps_steps_wraps_and_ends_with_esc() {
     let mut app = app_with(Some(&long_doc()), &["--filter", ".[]", "--raw"]);
     render(&mut app, 80, 24);

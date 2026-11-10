@@ -136,7 +136,10 @@ fn draw_pane(frame: &mut Frame, area: Rect, block: Block<'static>, pane: &mut Pa
     }
     frame
         .render_widget(Paragraph::new(lines).style(if pane.error { error } else { text }).block(block), area);
+    pane.bar = None;
     if pane.doc.len() > h {
+        let track = area.inner(Margin { vertical: 1, horizontal: 0 });
+        pane.bar = Some(Rect::new(track.right().saturating_sub(1), track.y, 1, track.height));
         let mut state = ScrollbarState::new(pane.doc.len() - h).position(pane.scroll_y);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight).begin_symbol(None).end_symbol(None),
