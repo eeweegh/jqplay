@@ -11,10 +11,10 @@ jqplay data.json --filter '.items[] | select(.active)'
 
 ## Install
 
-Prebuilt binaries (macOS Apple Silicon, Linux x86_64 static) are attached to each [GitHub release](https://github.com/eeweegh/jqplay/releases). `jq` must be on PATH.
+Prebuilt binaries (macOS Apple Silicon, Linux x86_64 and aarch64 static) are attached to each [GitHub release](https://github.com/eeweegh/jqplay/releases). `jq` must be on PATH.
 
 ```
-gh release download --repo eeweegh/jqplay -p '*linux-musl.tar.gz'   # or '*apple-darwin.tar.gz'
+gh release download --repo eeweegh/jqplay -p '*x86_64-unknown-linux-musl.tar.gz'   # or '*aarch64-unknown-linux-musl.tar.gz', '*aarch64-apple-darwin.tar.gz'
 tar xzf jqplay-v*.tar.gz && install jqplay-v*/jqplay ~/.local/bin/
 ```
 
