@@ -1,6 +1,11 @@
+use super::pick::{add_constraint, pick};
 use super::{App, Focus};
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
+use std::time::{Duration, Instant};
+
+// Two left clicks on the same row of the input pane within this time are a double-click.
+const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 // Percentage of `lower` left of `column`, keeping at least MIN_PANE_WIDTH columns on each side.
 pub fn split_for_column(column: u16, lower: Rect) -> u16 {
@@ -32,6 +37,31 @@ impl App {
             Some(Focus::Json) => self.json_pane.scroll_to_bar_row(row),
             Some(Focus::Results) => self.results_pane.scroll_to_bar_row(row),
             _ => {}
+        }
+    }
+
+    // A double-click on a scalar of the input pane adds "that key has that value" to the query.
+    fn click_input_pane(&mut self, at: Position) {
+        let now = Instant::now();
+        let previous = self.last_click.take();
+        if !previous.is_some_and(|(t, p)| p.y == at.y && now.duration_since(t) <= DOUBLE_CLICK) {
+            self.last_click = Some((now, at));
+            return;
+        }
+        let area = self.rects.json;
+        let row = usize::from(at.y.saturating_sub(area.y + 1));
+        let inside = at.y > area.y && at.y + 1 < area.bottom();
+        if !inside || self.json_pane.error {
+            return;
+        }
+        let line = self.json_pane.scroll_y + row;
+        match pick(&self.json_pane.doc, line) {
+            Some(picked) => {
+                let query = add_constraint(self.editor.text(), &picked);
+                self.editor.set_text(&query);
+                self.run_now();
+            }
+            None => self.status_message = "double-click a value (string, number, true, false or null)".into(),
         }
     }
 
@@ -71,7 +101,14 @@ impl App {
                 self.dragging = false;
                 self.dragging_bar = None;
             }
-            (MouseEventKind::Down(MouseButton::Left), Some(f)) if f != self.focus => self.set_focus(f),
+            (MouseEventKind::Down(MouseButton::Left), Some(f)) => {
+                if f != self.focus {
+                    self.set_focus(f);
+                }
+                if f == Focus::Json {
+                    self.click_input_pane(at);
+                }
+            }
             (MouseEventKind::ScrollUp | MouseEventKind::ScrollDown, Some(f)) => {
                 let down = mouse.kind == MouseEventKind::ScrollDown;
                 match f {

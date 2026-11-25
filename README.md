@@ -29,7 +29,7 @@ The filter pane is multi-line: Enter (also Alt+Enter, Ctrl+J) adds a line and th
 | --- | --- |
 | `cli`, `config` | clap definitions; TOML config (`~/.config/jqplay/config.toml`) merged under the flags |
 | `jq`, `job` | jq subprocess runner (cancellable, with a timeout) and the job/reply types for the worker threads |
-| `app` | pure state machine: events in, jobs out (no I/O except history, reload, save); split into `jobs` (caches, in-flight bookkeeping), `keys`, `mouse`, `pane`, `complete` and `save` |
+| `app` | pure state machine: events in, jobs out (no I/O except history, reload, save); split into `jobs` (caches, in-flight bookkeeping), `keys`, `mouse`, `pane`, `count` (item count of the result), `pick` (double-click value to filter constraint), `complete` and `save` |
 | `ui`, `theme` | stateless ratatui rendering of `&mut App` |
 | `ansi` | SGR parser and the line-indexed `Document` that only parses visible rows |
 | `editor`, `completion`, `history` | filter line editing, path completion, history file |

@@ -237,6 +237,12 @@ impl Document {
         &self.text
     }
 
+    // Line `i` without colour escapes.
+    pub fn plain_line(&self, i: usize) -> Option<String> {
+        let raw = &self.text[self.lines.get(i)?.clone()];
+        Some(if self.color { strip_ansi(raw) } else { raw.to_string() })
+    }
+
     // Literal search over the visible text, in document order. Smart-case: a query containing an
     // uppercase char matches case-sensitively, otherwise case is ignored.
     pub fn find(&self, query: &str) -> Vec<Match> {

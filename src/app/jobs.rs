@@ -1,3 +1,4 @@
+use super::count::count_results;
 use super::{App, DEBOUNCE, Focus};
 use crate::ansi::Document;
 use crate::job::{Job, JobKind, JobResult, Reply};
@@ -27,6 +28,11 @@ impl<K: PartialEq, V> Cache<K, V> {
 
     pub(super) fn set(&mut self, key: K, value: V) {
         self.0 = Some((key, value));
+    }
+
+    // The latest value, whatever it answered.
+    pub(super) fn latest(&self) -> Option<&V> {
+        self.0.as_ref().map(|(_, v)| v)
     }
 
     pub(super) fn is_stale(&self, key: &K) -> bool {
@@ -163,23 +169,34 @@ impl App {
         if self.blank_json() {
             self.json_valid = true;
             self.json_count = None;
+            self.result_count = Cache::default();
             return self.results_pane.set(Document::default(), false);
         }
         let Some(validity) = self.validity.get(&self.generation) else { return };
         self.json_valid = validity.ok();
         self.json_count = validity.ok().then(|| validity.stdout.trim().parse().ok()).flatten();
         if !validity.ok() {
+            self.result_count = Cache::default();
             let doc = error_doc(&validity.stderr, "invalid JSON");
             return self.results_pane.set(doc, true);
         }
         if self.applied_filter.trim().is_empty() {
+            self.result_count = Cache::default();
             return self.results_pane.set(Document::default(), false);
         }
         let Some(out) = self.run.get(&self.run_key()) else { return };
         if out.ok() {
             let doc = Document::new(&out.stdout, self.options.color);
+            let key = self.run_key();
+            if self.result_count.is_stale(&key) {
+                match count_results(&out.stdout, self.options.raw) {
+                    Some(count) => self.result_count.set(key, count),
+                    None => self.result_count = Cache::default(),
+                }
+            }
             self.results_pane.set(doc, false);
         } else {
+            self.result_count = Cache::default();
             self.results_pane.set(error_doc(&out.stderr, "jq error"), true);
         }
     }

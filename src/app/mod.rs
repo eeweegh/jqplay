@@ -1,8 +1,10 @@
 mod complete;
+mod count;
 mod jobs;
 mod keys;
 mod mouse;
 mod pane;
+mod pick;
 mod save;
 
 use crate::completion::{self, Completion};
@@ -14,12 +16,13 @@ use crate::job::{Job, Reply};
 use crate::jq::{Options, Output};
 use crate::theme::Theme;
 pub use completion::MAX_VISIBLE_ROWS;
+pub use count::ResultCount;
 use jobs::{Cache, InFlight, InputKey, RunKey};
 pub use mouse::split_for_column;
 pub use pane::{Pane, Search, SearchMode};
 use ratatui::crossterm::event::{Event as TermEvent, KeyEventKind};
-use ratatui::layout::Rect;
-pub use save::Prompt;
+use ratatui::layout::{Position, Rect};
+pub use save::{Prompt, SaveKind};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -83,10 +86,11 @@ pub struct App {
     suspend: bool,
     dragging: bool,
     dragging_bar: Option<Focus>,
+    last_click: Option<(Instant, Position)>,
     history: FilterHistory,
     history_file: Option<PathBuf>,
     source_file: Option<PathBuf>,
-    last_save_path: Option<String>,
+    last_save_path: [Option<String>; 2],
     json: Arc<str>,
     generation: u64,
     applied_filter: String,
@@ -96,6 +100,7 @@ pub struct App {
     validity: Cache<u64, Output>,
     pretty: Cache<InputKey, Output>,
     run: Cache<RunKey, Output>,
+    result_count: Cache<RunKey, ResultCount>,
     paths: Cache<InputKey, Result<Vec<String>, Output>>,
     inflight: [Option<InFlight>; JobKind::SLOTS],
     outbox: Vec<Job>,
@@ -135,10 +140,11 @@ impl App {
             suspend: false,
             dragging: false,
             dragging_bar: None,
+            last_click: None,
             history,
             history_file: settings.history_file.clone(),
             source_file: settings.file.clone(),
-            last_save_path: None,
+            last_save_path: [None, None],
             json: Arc::from(json.unwrap_or_default()),
             generation: 0,
             applied_filter: filter,
@@ -148,6 +154,7 @@ impl App {
             validity: Cache::default(),
             pretty: Cache::default(),
             run: Cache::default(),
+            result_count: Cache::default(),
             paths: Cache::default(),
             inflight: Default::default(),
             outbox: Vec::new(),
@@ -159,6 +166,11 @@ impl App {
 
     pub fn outcome(&self) -> Option<&Outcome> {
         self.outcome.as_ref()
+    }
+
+    // The count of what the result pane shows (None while it shows no results).
+    pub fn result_count(&self) -> Option<ResultCount> {
+        self.result_count.latest().copied()
     }
 
     pub fn deadline(&self) -> Option<Instant> {

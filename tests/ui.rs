@@ -5,7 +5,9 @@ use jqplay::history::FilterHistory;
 use ratatui::crossterm::event::{
     Event as TermEvent, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use support::{SAMPLE, app_with, ctrl, flush_debounce, focus_next, focus_prev, press, render, type_text};
+use support::{
+    SAMPLE, app_with, ctrl, flush_debounce, focus_next, focus_prev, press, render, status_style, type_text,
+};
 
 #[test]
 fn startup_with_filter_shows_input_and_result() {
@@ -130,6 +132,7 @@ fn save_writes_plain_result_text() {
     let target = dir.path().join("out/result.txt");
     let mut app = app_with(Some(SAMPLE), &["--filter", ".count"]);
     focus_next(&mut app);
+    focus_next(&mut app);
     ctrl(&mut app, 'y');
     assert!(app.prompt.is_some());
     for _ in 0..20 {
@@ -170,6 +173,8 @@ fn saving_over_an_existing_file_needs_a_second_enter() {
 fn nothing_to_save_without_results() {
     let mut app = app_with(Some(SAMPLE), &[]);
     focus_next(&mut app);
+    focus_next(&mut app);
+    assert_eq!(app.focus, Focus::Results);
     ctrl(&mut app, 'y');
     assert!(app.prompt.is_none());
     assert_eq!(app.status_message, "nothing to save (no valid results)");
@@ -208,10 +213,12 @@ fn end_key_scrolls_to_the_true_bottom() {
 fn esc_dismisses_status_message_and_popup() {
     let mut app = app_with(Some(SAMPLE), &[]);
     focus_next(&mut app);
+    focus_next(&mut app);
     ctrl(&mut app, 'y');
     assert!(!app.status_message.is_empty());
     press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
     assert!(app.status_message.is_empty());
+    focus_prev(&mut app);
     focus_prev(&mut app);
     type_text(&mut app, ".us");
     assert!(app.completion.open);
@@ -692,4 +699,210 @@ fn dropping_the_app_stops_running_jq_processes() {
     for _ in 0..count {
         rx.recv_timeout(Duration::from_secs(10)).expect("a jq outlived the app");
     }
+}
+
+fn save_as(app: &mut jqplay::app::App, path: &std::path::Path) {
+    for _ in 0..30 {
+        press(app, KeyCode::Backspace, KeyModifiers::NONE);
+    }
+    type_text(app, path.to_str().unwrap());
+    press(app, KeyCode::Enter, KeyModifiers::NONE);
+}
+
+#[test]
+fn ctrl_s_saves_what_the_focused_pane_shows() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".count"]);
+    focus_next(&mut app);
+    assert_eq!(app.focus, Focus::Json);
+    ctrl(&mut app, 's');
+    let screen = render(&mut app, 90, 16);
+    assert!(screen.contains("save input to path") && screen.contains("input.json"), "{screen}");
+    let input = dir.path().join("in.json");
+    save_as(&mut app, &input);
+    let saved = std::fs::read_to_string(&input).unwrap();
+    assert!(saved.starts_with("{\n  \"users\": [\n") && !saved.contains('\x1b'), "{saved}");
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&saved).unwrap()["count"], 2);
+
+    focus_next(&mut app);
+    assert_eq!(app.focus, Focus::Results);
+    ctrl(&mut app, 's');
+    let screen = render(&mut app, 90, 16);
+    assert!(screen.contains("save results to path") && screen.contains("output.json"), "{screen}");
+    let output = dir.path().join("out.json");
+    save_as(&mut app, &output);
+    assert_eq!(std::fs::read_to_string(&output).unwrap(), "2\n");
+}
+
+#[test]
+fn the_remembered_save_path_is_per_pane() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".count"]);
+    focus_next(&mut app);
+    ctrl(&mut app, 's');
+    save_as(&mut app, &dir.path().join("in.json"));
+    let proposed = |app: &jqplay::app::App| app.prompt.as_ref().unwrap().editor.text().to_string();
+    ctrl(&mut app, 's');
+    assert!(proposed(&app).ends_with("in.json"));
+    press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    focus_next(&mut app);
+    ctrl(&mut app, 's');
+    assert_eq!(proposed(&app), "output.json");
+}
+
+#[test]
+fn nothing_to_save_from_the_input_pane_when_the_json_is_invalid() {
+    let mut app = app_with(Some("{oops"), &["--filter", "."]);
+    focus_next(&mut app);
+    ctrl(&mut app, 's');
+    assert!(app.prompt.is_none());
+    assert_eq!(app.status_message, "nothing to save (no valid input)");
+}
+
+#[test]
+fn the_hotkey_letter_keeps_its_style_whether_or_not_the_option_is_on() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", "."]);
+    let off = status_style(&mut app, 100, 12, "raw");
+    let rest_off = status_style(&mut app, 100, 12, "aw");
+    focus_next(&mut app);
+    type_text(&mut app, "r");
+    assert!(app.options.raw);
+    let on = status_style(&mut app, 100, 12, "raw");
+    let rest_on = status_style(&mut app, 100, 12, "aw");
+    assert_eq!(off, on);
+    assert_ne!(rest_off, rest_on);
+    assert_ne!(on, rest_on, "the hotkey letter stands out from the label");
+}
+
+// Left-clicks on the input pane's content line `line`, as the terminal reports them.
+fn click_json_line(app: &mut jqplay::app::App, line: u16) {
+    let (x, y) = (app.rects.json.x + 3, app.rects.json.y + 1 + line);
+    mouse(app, MouseEventKind::Down(MouseButton::Left), x, y);
+    mouse(app, MouseEventKind::Up(MouseButton::Left), x, y);
+}
+
+fn double_click_json_line(app: &mut jqplay::app::App, line: u16) {
+    click_json_line(app, line);
+    click_json_line(app, line);
+    support::settle(app);
+}
+
+// Input pane lines of SAMPLE pretty-printed: 3 = users[0].name, 4 = age, 7 = users[1].name, 11 = count.
+#[test]
+fn double_clicking_a_value_filters_on_it() {
+    let mut app = app_with(Some(SAMPLE), &[]);
+    render(&mut app, 100, 24);
+    double_click_json_line(&mut app, 7);
+    assert_eq!(app.editor.text(), ".users[] | select(.name == \"bob\")");
+    assert_eq!(app.focus, Focus::Json);
+    let screen = render(&mut app, 100, 24);
+    assert!(screen.contains("\"age\": 27"), "{screen}");
+    // A second constraint is and-ed onto the select.
+    double_click_json_line(&mut app, 8);
+    assert_eq!(app.editor.text(), ".users[] | select(.name == \"bob\" and .age == 27)");
+}
+
+#[test]
+fn double_clicking_adds_a_select_stage_to_a_plain_query() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".users[]"]);
+    render(&mut app, 100, 24);
+    double_click_json_line(&mut app, 4);
+    assert_eq!(app.editor.text(), ".users[] | select(.age == 31)");
+}
+
+#[test]
+fn double_clicking_a_value_outside_an_array_has_no_prefix() {
+    let mut app = app_with(Some(SAMPLE), &[]);
+    render(&mut app, 100, 24);
+    double_click_json_line(&mut app, 11);
+    assert_eq!(app.editor.text(), "select(.count == 2)");
+}
+
+#[test]
+fn a_single_click_or_a_click_on_a_container_does_not_touch_the_filter() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", "."]);
+    render(&mut app, 100, 24);
+    click_json_line(&mut app, 3);
+    assert_eq!(app.editor.text(), ".");
+    // Two clicks on different lines are not a double-click.
+    click_json_line(&mut app, 4);
+    assert_eq!(app.editor.text(), ".");
+    double_click_json_line(&mut app, 1);
+    assert_eq!(app.editor.text(), ".");
+    assert!(app.status_message.starts_with("double-click a value"));
+}
+
+#[test]
+fn a_slow_second_click_is_not_a_double_click() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", "."]);
+    render(&mut app, 100, 24);
+    click_json_line(&mut app, 3);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    click_json_line(&mut app, 3);
+    assert_eq!(app.editor.text(), ".");
+}
+
+#[test]
+fn double_clicking_the_result_pane_does_nothing() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", "."]);
+    render(&mut app, 100, 24);
+    let (x, y) = (app.rects.results.x + 3, app.rects.results.y + 4);
+    for _ in 0..2 {
+        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), x, y);
+    }
+    assert_eq!(app.editor.text(), ".");
+}
+
+fn status_row(app: &mut jqplay::app::App, width: u16) -> String {
+    // The test backend prints every row between quotes.
+    render(app, width, 16).lines().last().unwrap().trim_matches('"').to_string()
+}
+
+#[test]
+fn the_result_count_sits_at_the_right_end_of_the_status_bar() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".users[]"]);
+    let row = status_row(&mut app, 120);
+    assert!(row.starts_with(" ● json:valid (1)"), "{row}");
+    assert!(row.trim_end().ends_with("result:2"), "{row}");
+    assert_eq!(row.chars().count(), 120);
+    // A lone array counts its items, like the input does.
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".users"]);
+    assert!(status_row(&mut app, 120).trim_end().ends_with("result:2"));
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".users[] | select(.age > 99)"]);
+    assert!(status_row(&mut app, 120).trim_end().ends_with("result:0"));
+}
+
+#[test]
+fn raw_output_counts_lines_and_says_so() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".users[].name", "--raw"]);
+    assert!(status_row(&mut app, 120).trim_end().ends_with("result:2 lines"));
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".count", "--raw"]);
+    assert!(status_row(&mut app, 120).trim_end().ends_with("result:1 line"));
+}
+
+#[test]
+fn there_is_no_result_count_without_results() {
+    for (json, filter) in [(SAMPLE, ""), (SAMPLE, ".users[] | error"), ("{oops", ".")] {
+        let mut app = app_with(Some(json), &["--filter", filter]);
+        assert!(!status_row(&mut app, 120).contains("result:"), "{json} {filter}");
+    }
+}
+
+#[test]
+fn the_result_count_gives_way_to_nothing_but_the_key_hints() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".users[]"]);
+    let row = status_row(&mut app, 70);
+    assert!(row.contains("Color") && row.trim_end().ends_with("result:2"), "{row}");
+    assert_eq!(row.chars().count(), 70);
+    // Too narrow to keep both: the count is dropped, not the options.
+    let row = status_row(&mut app, 30);
+    assert!(!row.contains("result:"), "{row}");
+}
+
+#[test]
+fn double_clicking_leaves_the_status_message_alone() {
+    let mut app = app_with(Some(SAMPLE), &[]);
+    render(&mut app, 100, 24);
+    double_click_json_line(&mut app, 7);
+    assert_eq!(app.status_message, "");
 }

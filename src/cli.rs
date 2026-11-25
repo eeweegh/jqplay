@@ -17,7 +17,8 @@ Layout:
   +------------------------------+---------------------------+
   Each pane scrolls independently (arrows, PageUp/PageDown or b/Space, Home/End,
   mouse wheel, dragging the scrollbar). In JSON Input and Result, / starts an incremental search of that pane (smart-case; Enter
-  keeps it, n / N jump to the next / previous match, Esc ends it). They are view-only; load JSON via a file argument,
+  keeps it, n / N jump to the next / previous match, Esc ends it). They are view-only (except that double-clicking a value in
+  JSON Input adds `select(<key> == <value>)` to the filter, and-ed onto a trailing select); load JSON via a file argument,
   stdin, or Ctrl+F. On accepting (q in the JSON/Result panes, Ctrl+Q anywhere) the current filter is printed to
   stdout as: jq '<filter>'
   Empty input (empty or whitespace-only stdin or file) exits at once, silently, with status 0.
@@ -28,7 +29,9 @@ Global keybindings:
   q / Ctrl+Q        accept and exit: code 0, prints the current jq filter
                     (q in the JSON/Result panes, Ctrl+Q anywhere)
   Ctrl+C            abort: code 1, prints nothing
-  Ctrl+S            save the Result text to a path (any pane); Ctrl+Y also
+  Ctrl+S            save the text of the focused pane to a path: the JSON pane
+                    saves the input (default input.json), the Result and filter
+                    panes save the output (default output.json); Ctrl+Y also
                     does this from the JSON or Result pane
   Esc               dismiss a status message / close the completion popup
   Ctrl+F            reload the JSON from its source file (not for stdin)

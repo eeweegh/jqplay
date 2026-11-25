@@ -149,17 +149,12 @@ fn draw_pane(frame: &mut Frame, area: Rect, block: Block<'static>, pane: &mut Pa
     }
 }
 
-// "[r]aw" style without the brackets: an option that is off gets its key letter (the first letter)
-// in colour; one that is on reads as plain bold text.
+// "[r]aw" style without the brackets: the key letter (the first letter) always has the hotkey colour; the
+// rest is bold when the option is on and dim when it is off.
 fn option_spans(app: &App, label: &str, on: bool) -> Vec<Span<'static>> {
-    if on {
-        return vec![Span::styled(label.to_string(), app.theme.option_on)];
-    }
     let (key, rest) = label.split_at(1);
-    vec![
-        Span::styled(key.to_string(), app.theme.toggle_off),
-        Span::styled(rest.to_string(), app.theme.option_off),
-    ]
+    let rest_style = if on { app.theme.option_on } else { app.theme.option_off };
+    vec![Span::styled(key.to_string(), app.theme.hotkey), Span::styled(rest.to_string(), rest_style)]
 }
 
 // One line, capped at a third of the bar so the option labels and hints stay visible.
@@ -199,7 +194,36 @@ fn status_line(app: &App, width: u16) -> Line<'static> {
     }
     spans.push(Span::raw("  "));
     spans.push(Span::styled(HINTS, app.theme.option_off));
+    if let Some(count) = app.result_count() {
+        right_align(&mut spans, &format!("result:{count} "), usize::from(width));
+    }
     Line::from(spans).style(app.theme.status)
+}
+
+// Puts `right` at the end of a line `width` columns wide. The last span (the key hints) is cut short when it
+// would collide with it; when even the spans before the hints do not fit beside it, `right` is left out.
+fn right_align(spans: &mut Vec<Span<'static>>, right: &str, width: usize) {
+    let room = width.saturating_sub(right.chars().count() + 1);
+    let fixed: usize = spans.iter().rev().skip(1).map(|s| s.content.chars().count()).sum();
+    if fixed > room {
+        return;
+    }
+    let mut left = 0;
+    let mut kept = Vec::new();
+    for span in spans.drain(..) {
+        let len = span.content.chars().count();
+        if left + len > room {
+            let cut: String = span.content.chars().take(room - left).collect();
+            kept.push(Span::styled(cut, span.style));
+            left = room;
+            break;
+        }
+        left += len;
+        kept.push(span);
+    }
+    *spans = kept;
+    spans.push(Span::raw(" ".repeat(width - left - right.chars().count())));
+    spans.push(Span::raw(right.to_string()));
 }
 
 fn draw_completion(frame: &mut Frame, app: &App, filter_area: Rect) {
@@ -227,7 +251,7 @@ fn draw_prompt(frame: &mut Frame, app: &App, screen: Rect) {
     )
     .intersection(screen);
     let title =
-        if prompt.overwrite { "file exists: Enter overwrites, Esc cancels" } else { "save results to path" };
+        if prompt.overwrite { "file exists: Enter overwrites, Esc cancels" } else { prompt.kind.title() };
     let block = block(title, true, app);
     let inner = block.inner(area);
     let offset = (prompt.editor.cursor() + 1).saturating_sub(usize::from(inner.width));
