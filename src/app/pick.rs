@@ -5,14 +5,24 @@
 // enclosing container.
 use crate::ansi::Document;
 
-// A scalar picked from the input pane. `rel` is the accessor relative to the enclosing array element
-// (`.name`, `.a.b`, or `.` when the value is itself an array element), `prefix` the path to that array's
-// elements (`.users[]`, `.[]`, or empty when no array encloses the value).
+// What a double-click on a scalar of the input pane asks for, with full key paths from the record root:
+// the value at a path, or, for a value inside an array, that some element of the array satisfies the inner term
+// (array indices are dropped, so it reads "any element ...").
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Pick {
-    pub prefix: String,
-    pub rel: String,
-    pub literal: String,
+pub enum Term {
+    // `path` is `.a.b`, or `.` for the record itself (or the element itself inside an array).
+    Eq { path: String, literal: String },
+    // `array` is the path to the elements, e.g. `.orders[]`.
+    Any { array: String, inner: Box<Term> },
+}
+
+impl Term {
+    fn render(&self) -> String {
+        match self {
+            Self::Eq { path, literal } => format!("{path} == {literal}"),
+            Self::Any { array, inner } => format!("any({array}; {})", inner.render()),
+        }
+    }
 }
 
 enum Seg {
@@ -71,7 +81,7 @@ fn segment(p: &Parsed) -> Option<Seg> {
 
 // The scalar on `line` of the pretty-printed `doc`, or None for containers, closing brackets and
 // out-of-range lines.
-pub fn pick(doc: &Document, line: usize) -> Option<Pick> {
+pub fn pick(doc: &Document, line: usize) -> Option<Term> {
     let clicked = parse_line(&doc.plain_line(line)?);
     if !is_scalar(&clicked.rest) {
         return None;
@@ -87,23 +97,28 @@ pub fn pick(doc: &Document, line: usize) -> Option<Pick> {
         (indent, at) = (parent.indent, j);
     }
     segs.reverse();
-    let split = segs.iter().rposition(|s| matches!(s, Seg::Index)).map_or(0, |i| i + 1);
-    let render = |segs: &[Seg]| -> String {
-        let path: String = segs
-            .iter()
-            .map(|s| match s {
-                Seg::Key(a) => a.as_str(),
-                Seg::Index => "[]",
-            })
-            .collect();
-        if path.starts_with('[') { format!(".{path}") } else { path }
-    };
-    let rel = render(&segs[split..]);
-    Some(Pick {
-        prefix: if split == 0 { String::new() } else { render(&segs[..split]) },
-        rel: if rel.is_empty() { ".".into() } else { rel },
-        literal: clicked.rest,
-    })
+    Some(term(&segs, clicked.rest))
+}
+
+fn keys(segs: &[Seg]) -> String {
+    segs.iter()
+        .map(|s| match s {
+            Seg::Key(a) => a.as_str(),
+            Seg::Index => "[]",
+        })
+        .collect()
+}
+
+// Splits the path at each array level: `.a[].b[].c` becomes any(.a[]; any(.b[]; .c == v)).
+fn term(segs: &[Seg], literal: String) -> Term {
+    match segs.iter().position(|s| matches!(s, Seg::Index)) {
+        None => Term::Eq { path: if segs.is_empty() { ".".into() } else { keys(segs) }, literal },
+        Some(i) => {
+            let base = keys(&segs[..i]);
+            let array = format!("{}[]", if base.is_empty() { "." } else { &base });
+            Term::Any { array, inner: Box::new(term(&segs[i + 1..], literal)) }
+        }
+    }
 }
 
 // A code character of a jq program with the parenthesis depth around it.
@@ -186,42 +201,130 @@ fn needs_parens(x: &str) -> bool {
     })
 }
 
-// When the query's last pipe stage is `select(X)`: where that stage starts, and X.
-fn last_select(query: &str) -> Option<(usize, &str)> {
-    let code = code_chars(query);
-    let last = code.last().filter(|c| c.ch == ')' && c.depth == 0 && c.at + 1 == query.len())?;
+// The index of the `)` that closes the `(` at byte `open`, among the code characters of one text.
+fn matching_close(code: &[Code], open: usize) -> Option<usize> {
     let mut opens = Vec::new();
-    let mut open = None;
-    for c in &code {
-        match c.ch {
-            '(' => opens.push(c.at),
-            ')' => open = opens.pop(),
-            _ => {}
+    for c in code {
+        if c.ch == '(' {
+            opens.push(c.at);
+        } else if c.ch == ')' && opens.pop() == Some(open) {
+            return Some(c.at);
         }
     }
-    let open = open?;
-    let head = query[..open].trim_end().strip_suffix("select")?;
-    let stage = head.trim_end();
-    (!head.ends_with(is_word_char) && (stage.is_empty() || stage.ends_with('|')))
-        .then(|| (head.len(), query[open + 1..last.at].trim()))
+    None
 }
 
-// The query with `pick` added as a constraint: a trailing `select(X)` is extended with `and`, anything else
-// gets a `| select(...)` stage (an empty query selects from the elements of the array around the value).
-pub fn add_constraint(query: &str, pick: &Pick) -> String {
-    let cond = format!("{} == {}", pick.rel, pick.literal);
-    let query = query.trim();
-    if query.is_empty() {
-        return if pick.prefix.is_empty() {
-            format!("select({cond})")
-        } else {
-            format!("{} | select({cond})", pick.prefix)
-        };
+// The text up to the first top-level pipe (`|=` is an update operator, not a pipe).
+fn first_stage(query: &str) -> &str {
+    let code = code_chars(query);
+    let pipe = code.iter().enumerate().find(|(i, c)| {
+        let assign = code.get(i + 1).is_some_and(|n| n.at == c.at + 1 && n.ch == '=');
+        c.ch == '|' && c.depth == 0 && !assign
+    });
+    query[..pipe.map_or(query.len(), |(_, c)| c.at)].trim_end()
+}
+
+// When `stage` is exactly `select(X)`: X.
+fn select_arg(stage: &str) -> Option<&str> {
+    let after = stage.strip_prefix("select")?;
+    let open = stage.len() - after.trim_start().len();
+    after.trim_start().starts_with('(').then_some(())?;
+    (matching_close(&code_chars(stage), open)? + 1 == stage.len())
+        .then(|| stage[open + 1..stage.len() - 1].trim())
+}
+
+// The pieces of `x` between its top-level `and` words (`x` binds no looser than `and`).
+fn conjuncts(x: &str) -> Vec<&str> {
+    let code = code_chars(x);
+    let is_and = |i: usize| {
+        let at = code[i].at;
+        let word =
+            |k: usize| code.get(i + k).is_some_and(|c| c.at == at + k && c.ch == char::from(b"and"[k]));
+        code[i].depth == 0
+            && word(0)
+            && word(1)
+            && word(2)
+            && !x[..at].ends_with(is_word_char)
+            && !x[at + 3..].starts_with(is_word_char)
+    };
+    let (mut pieces, mut from) = (Vec::new(), 0);
+    for i in 0..code.len() {
+        if is_and(i) {
+            pieces.push(x[from..code[i].at].trim());
+            from = code[i].at + 3;
+        }
     }
-    match last_select(query) {
-        Some((start, x)) if needs_parens(x) => format!("{}select(({x}) and {cond})", &query[..start]),
-        Some((start, x)) => format!("{}select({x} and {cond})", &query[..start]),
-        None => format!("{query} | select({cond})"),
+    pieces.push(x[from..].trim());
+    pieces
+}
+
+// `any(<array>; <inner>)` -> (array, inner).
+fn any_parts(piece: &str) -> Option<(&str, &str)> {
+    let body = piece.strip_prefix("any(")?.strip_suffix(')')?;
+    // The `(` after `any` must be closed by that last `)`, not earlier (`any(a; b) and any(c; d)`).
+    (matching_close(&code_chars(piece), 3)? + 1 == piece.len()).then_some(())?;
+    let semi = code_chars(body).iter().find(|c| c.ch == ';' && c.depth == 0)?.at;
+    Some((body[..semi].trim(), body[semi + 1..].trim()))
+}
+
+// `x and term`, folding `term` into the `any(...)` over the same array when there is one, so that both
+// conditions hold for the same element.
+fn and_term(x: &str, term: &Term) -> String {
+    if x.is_empty() {
+        return term.render();
+    }
+    if needs_parens(x) {
+        return format!("({x}) and {}", term.render());
+    }
+    if let Term::Any { array, inner } = term {
+        let pieces = conjuncts(x);
+        let target = pieces.iter().position(|p| any_parts(p).is_some_and(|(a, _)| a == array));
+        if let Some(i) = target {
+            let (_, y) = any_parts(pieces[i]).unwrap_or_default();
+            let merged = format!("any({array}; {})", and_term(y, inner));
+            let joined: Vec<String> = pieces
+                .iter()
+                .enumerate()
+                .map(|(k, p)| if k == i { merged.clone() } else { (*p).to_string() })
+                .collect();
+            return joined.join(" and ");
+        }
+    }
+    format!("{x} and {}", term.render())
+}
+
+// Adds `term` to a query that sees one record: a select that is the first stage takes it as an extra `and`
+// condition, otherwise a new select goes in front.
+fn constrain(query: &str, term: &Term) -> String {
+    if query.is_empty() {
+        return format!("select({})", term.render());
+    }
+    let stage = first_stage(query);
+    match select_arg(stage) {
+        Some(x) => format!("select({}){}", and_term(x, term), &query[stage.len()..]),
+        None => format!("select({}) | {query}", term.render()),
+    }
+}
+
+// The query without a leading `.[] |`.
+fn without_iteration(query: &str) -> &str {
+    let stage = first_stage(query);
+    if stage != ".[]" {
+        return query;
+    }
+    query[stage.len()..].trim_start().strip_prefix('|').map_or("", str::trim_start)
+}
+
+// The query with `term` added as a constraint that filters the input before anything else touches it. When
+// the input is an array (a slurped stream), its elements are the records: a leading `.[] |` is kept or added
+// and everything after it is treated as for a stream of records.
+pub fn add_constraint(query: &str, term: &Term) -> String {
+    let query = query.trim();
+    match term {
+        Term::Any { array, inner } if array == ".[]" => {
+            format!(".[] | {}", constrain(without_iteration(query), inner))
+        }
+        _ => constrain(query, term),
     }
 }
 
@@ -246,42 +349,89 @@ mod tests {
   "count": 2
 }"#;
 
-    fn picked(text: &str, needle: &str) -> Option<Pick> {
+    const RECORDS: &str = r#"{
+  "name": "ann",
+  "age": 31,
+  "addr": {
+    "city": "Gent"
+  }
+}
+{
+  "name": "bob",
+  "age": 27,
+  "addr": {
+    "city": "Brugge"
+  }
+}"#;
+
+    // The constraint for the first line containing `needle`, as jq text.
+    fn picked(text: &str, needle: &str) -> Option<String> {
+        term_at(text, needle).map(|t| t.render())
+    }
+
+    fn term_at(text: &str, needle: &str) -> Option<Term> {
         let doc = Document::plain(text);
         let line = text.lines().position(|l| l.contains(needle)).unwrap();
         pick(&doc, line)
     }
 
-    fn pk(prefix: &str, rel: &str, literal: &str) -> Pick {
-        Pick { prefix: prefix.into(), rel: rel.into(), literal: literal.into() }
+    fn eq(path: &str, literal: &str) -> Term {
+        Term::Eq { path: path.into(), literal: literal.into() }
+    }
+
+    fn any(array: &str, inner: Term) -> Term {
+        Term::Any { array: array.into(), inner: Box::new(inner) }
+    }
+
+    fn add(query: &str, term: &Term) -> String {
+        add_constraint(query, term)
     }
 
     #[test]
-    fn a_key_inside_an_array_element_is_relative_to_that_element() {
-        assert_eq!(picked(PRETTY, "\"name\""), Some(pk(".users[]", ".name", "\"bob\"")));
-        assert_eq!(picked(PRETTY, "\"ok\""), Some(pk(".users[]", ".nested.ok", "true")));
+    fn keys_are_full_paths_from_the_record_root() {
+        assert_eq!(picked(RECORDS, "Gent").as_deref(), Some(".addr.city == \"Gent\""));
+        assert_eq!(picked(RECORDS, "\"age\": 27").as_deref(), Some(".age == 27"));
+    }
+
+    #[test]
+    fn each_record_of_a_stream_is_its_own_root() {
+        let second = RECORDS.lines().position(|l| l.contains("Brugge")).unwrap();
+        let doc = Document::plain(RECORDS);
+        assert_eq!(pick(&doc, second).unwrap(), eq(".addr.city", "\"Brugge\""));
+        assert_eq!(pick(&doc, 1).unwrap(), eq(".name", "\"ann\""));
     }
 
     #[test]
     fn odd_keys_are_quoted() {
-        assert_eq!(picked(PRETTY, "odd key"), Some(pk(".users[]", ".\"odd key\"", "1")));
+        let t = term_at("{\n  \"odd key\": 1\n}", "odd").unwrap();
+        assert_eq!(t, eq(".\"odd key\"", "1"));
     }
 
     #[test]
-    fn a_scalar_array_element_is_the_value_itself() {
-        assert_eq!(picked(PRETTY, "\"b\""), Some(pk(".users[].tags[]", ".", "\"b\"")));
+    fn values_inside_arrays_become_any() {
+        assert_eq!(picked(PRETTY, "\"name\"").as_deref(), Some("any(.users[]; .name == \"bob\")"));
+        assert_eq!(picked(PRETTY, "\"ok\"").as_deref(), Some("any(.users[]; .nested.ok == true)"));
+        assert_eq!(picked(PRETTY, "\"odd key\"").as_deref(), Some("any(.users[]; .\"odd key\" == 1)"));
     }
 
     #[test]
-    fn a_key_outside_any_array_has_no_prefix() {
-        assert_eq!(picked(PRETTY, "\"count\""), Some(pk("", ".count", "2")));
+    fn scalar_array_elements_and_nested_arrays() {
+        assert_eq!(picked(PRETTY, "\"b\"").as_deref(), Some("any(.users[]; any(.tags[]; . == \"b\"))"));
+        assert_eq!(
+            picked("{\n  \"tags\": [\n    \"a\"\n  ]\n}", "\"a\"").as_deref(),
+            Some("any(.tags[]; . == \"a\")")
+        );
+        assert_eq!(picked(PRETTY, "\"count\"").as_deref(), Some(".count == 2"));
     }
 
     #[test]
-    fn root_arrays_and_scalars() {
-        assert_eq!(picked("[\n  {\n    \"a\": null\n  }\n]", "\"a\""), Some(pk(".[]", ".a", "null")));
-        assert_eq!(picked("[\n  1,\n  2\n]", "2"), Some(pk(".[]", ".", "2")));
-        assert_eq!(picked("5", "5"), Some(pk("", ".", "5")));
+    fn bare_scalars_and_root_arrays() {
+        assert_eq!(picked("5", "5").as_deref(), Some(". == 5"));
+        assert_eq!(picked("[\n  1,\n  2\n]", "2").as_deref(), Some("any(.[]; . == 2)"));
+        assert_eq!(
+            picked("[\n  {\n    \"a\": null\n  }\n]", "\"a\"").as_deref(),
+            Some("any(.[]; .a == null)")
+        );
     }
 
     #[test]
@@ -295,61 +445,132 @@ mod tests {
     #[test]
     fn keys_with_escapes_and_colons_are_read_whole() {
         let text = "{\n  \"a\\\": b\": \"x: y\"\n}";
-        assert_eq!(picked(text, "x: y"), Some(pk("", ".\"a\\\": b\"", "\"x: y\"")));
+        assert_eq!(term_at(text, "x: y").unwrap(), eq(".\"a\\\": b\"", "\"x: y\""));
     }
 
     #[test]
-    fn an_empty_query_selects_from_the_array_elements() {
-        assert_eq!(
-            add_constraint("", &pk(".users[]", ".name", "\"bob\"")),
-            ".users[] | select(.name == \"bob\")"
-        );
-        assert_eq!(add_constraint("  ", &pk("", ".count", "2")), "select(.count == 2)");
+    fn an_empty_query_becomes_a_select() {
+        assert_eq!(add("", &eq(".addr.city", "\"Brugge\"")), "select(.addr.city == \"Brugge\")");
+        assert_eq!(add("  ", &eq(".age", "27")), "select(.age == 27)");
     }
 
     #[test]
-    fn a_plain_query_gets_a_select_stage() {
+    fn a_new_select_goes_in_front_of_the_query() {
+        let age = eq(".age", "27");
+        assert_eq!(add(".name", &age), "select(.age == 27) | .name");
+        assert_eq!(add(".users[] | .name", &age), "select(.age == 27) | .users[] | .name");
         assert_eq!(
-            add_constraint(".users[]", &pk(".users[]", ".name", "\"bob\"")),
-            ".users[] | select(.name == \"bob\")"
+            add(".name | select(. != \"x\")", &age),
+            "select(.age == 27) | .name | select(. != \"x\")"
         );
     }
 
     #[test]
-    fn a_trailing_select_is_extended_with_and() {
-        let p = pk(".[]", ".b", "2");
-        assert_eq!(add_constraint(".[] | select(.a == 1)", &p), ".[] | select(.a == 1 and .b == 2)");
-        assert_eq!(add_constraint("select(.a == 1)", &p), "select(.a == 1 and .b == 2)");
+    fn a_first_select_takes_an_extra_and() {
+        let age = eq(".age", "27");
         assert_eq!(
-            add_constraint(".[] | select(.a == 1) | .x", &p),
-            ".[] | select(.a == 1) | .x | select(.b == 2)"
+            add("select(.addr.city == \"Brugge\") | .name", &age),
+            "select(.addr.city == \"Brugge\" and .age == 27) | .name"
         );
+        assert_eq!(add("select(.a == 1)", &age), "select(.a == 1 and .age == 27)");
+        assert_eq!(add("select (.a == 1) | .x", &age), "select(.a == 1 and .age == 27) | .x");
+        assert_eq!(add("select(.a) | select(.b) | .x", &age), "select(.a and .age == 27) | select(.b) | .x");
     }
 
     #[test]
     fn a_select_that_binds_looser_than_and_is_parenthesised() {
-        let p = pk(".[]", ".b", "2");
-        assert_eq!(add_constraint("select(.a or .c)", &p), "select((.a or .c) and .b == 2)");
-        assert_eq!(add_constraint("select(.a // .c)", &p), "select((.a // .c) and .b == 2)");
-        assert_eq!(add_constraint("select(.a | f)", &p), "select((.a | f) and .b == 2)");
+        let age = eq(".age", "27");
+        assert_eq!(add("select(.a or .b) | .name", &age), "select((.a or .b) and .age == 27) | .name");
+        assert_eq!(add("select(.a // .c)", &age), "select((.a // .c) and .age == 27)");
+        assert_eq!(add("select(.a | f)", &age), "select((.a | f) and .age == 27)");
         assert_eq!(
-            add_constraint("select(.a != 1 and .c >= 3 and .d == 4)", &p),
-            "select(.a != 1 and .c >= 3 and .d == 4 and .b == 2)"
+            add("select(.a != 1 and .c >= 3 and .d == 4)", &age),
+            "select(.a != 1 and .c >= 3 and .d == 4 and .age == 27)"
         );
-        assert_eq!(add_constraint("select(.color == \"or\")", &p), "select(.color == \"or\" and .b == 2)");
+        assert_eq!(add("select(.color == \"or\")", &age), "select(.color == \"or\" and .age == 27)");
     }
 
     #[test]
-    fn parentheses_in_strings_and_nested_calls_do_not_confuse_the_scan() {
-        let p = pk(".[]", ".b", "2");
-        assert_eq!(add_constraint("select(.a == \")\")", &p), "select(.a == \")\" and .b == 2)");
+    fn strings_parentheses_and_update_operators_do_not_confuse_the_scan() {
+        let age = eq(".age", "27");
+        assert_eq!(add("select(.a == \")\")", &age), "select(.a == \")\" and .age == 27)");
+        assert_eq!(add("select(.a == \"x and y\")", &age), "select(.a == \"x and y\" and .age == 27)");
+        assert_eq!(add("select(.a | test(\"x(\"))", &age), "select((.a | test(\"x(\")) and .age == 27)");
+        assert_eq!(add("select(.a == \"\\(.x)\")", &age), "select(.a == \"\\(.x)\" and .age == 27)");
+        assert_eq!(add("select(.a) |= 1", &age), "select(.age == 27) | select(.a) |= 1");
+        assert_eq!(add(".a |= 1 | .b", &age), "select(.age == 27) | .a |= 1 | .b");
+        assert_eq!(add("myselect(.a)", &age), "select(.age == 27) | myselect(.a)");
+        assert_eq!(add("map(select(.a))", &age), "select(.age == 27) | map(select(.a))");
+        assert_eq!(add("select(.a) + 1", &age), "select(.age == 27) | select(.a) + 1");
+    }
+
+    #[test]
+    fn a_condition_on_the_same_array_is_merged_into_its_any() {
+        let id = any(".orders[]", eq(".id", "2"));
         assert_eq!(
-            add_constraint("select(.a | test(\"x(\"))", &p),
-            "select((.a | test(\"x(\")) and .b == 2)"
+            add("select(any(.orders[]; .total == 9)) | .id", &id),
+            "select(any(.orders[]; .total == 9 and .id == 2)) | .id"
         );
-        assert_eq!(add_constraint("select(.a == \"\\(.x)\")", &p), "select(.a == \"\\(.x)\" and .b == 2)");
-        assert_eq!(add_constraint("map(select(.a))", &p), "map(select(.a)) | select(.b == 2)");
-        assert_eq!(add_constraint("x + select(.a)", &p), "x + select(.a) | select(.b == 2)");
-        assert_eq!(add_constraint("myselect(.a)", &p), "myselect(.a) | select(.b == 2)");
+        assert_eq!(
+            add("select(.name == \"x\" and any(.orders[]; .total == 9))", &id),
+            "select(.name == \"x\" and any(.orders[]; .total == 9 and .id == 2))"
+        );
+        let d = any(".a[]", any(".b[]", eq(".d", "2")));
+        assert_eq!(
+            add("select(any(.a[]; any(.b[]; .c == 1)))", &d),
+            "select(any(.a[]; any(.b[]; .c == 1 and .d == 2)))"
+        );
+    }
+
+    #[test]
+    fn a_condition_on_another_array_or_a_looser_select_is_and_ed_on() {
+        let tag = any(".tags[]", eq(".", "\"b\""));
+        assert_eq!(
+            add("select(any(.orders[]; .total == 9))", &tag),
+            "select(any(.orders[]; .total == 9) and any(.tags[]; . == \"b\"))"
+        );
+        let id = any(".orders[]", eq(".id", "2"));
+        assert_eq!(
+            add("select(.a or any(.orders[]; .total == 9))", &id),
+            "select((.a or any(.orders[]; .total == 9)) and any(.orders[]; .id == 2))"
+        );
+        assert_eq!(
+            add("select(any(.orders[]; .total == 9) and any(.tags[]; . == \"b\"))", &id),
+            "select(any(.orders[]; .total == 9 and .id == 2) and any(.tags[]; . == \"b\"))"
+        );
+        assert_eq!(
+            add("select(any(.x[]; .a) and any(.orders[]; .b))", &eq(".c", "1")),
+            "select(any(.x[]; .a) and any(.orders[]; .b) and .c == 1)"
+        );
+    }
+
+    #[test]
+    fn the_elements_of_a_root_array_are_the_records() {
+        let age = any(".[]", eq(".age", "27"));
+        assert_eq!(add("", &age), ".[] | select(.age == 27)");
+        assert_eq!(add(".[]", &age), ".[] | select(.age == 27)");
+        assert_eq!(add(".[] | .name", &age), ".[] | select(.age == 27) | .name");
+        assert_eq!(
+            add(".[] | select(.name == \"bob\") | .name", &age),
+            ".[] | select(.name == \"bob\" and .age == 27) | .name"
+        );
+        assert_eq!(
+            add(".[] | .name | select(. != \"x\")", &age),
+            ".[] | select(.age == 27) | .name | select(. != \"x\")"
+        );
+        assert_eq!(add(".[] |= 1", &age), ".[] | select(.age == 27) | .[] |= 1");
+        // A query for the whole array is prefixed as well.
+        assert_eq!(add("map(.name)", &age), ".[] | select(.age == 27) | map(.name)");
+    }
+
+    #[test]
+    fn root_array_elements_can_be_scalars_or_hold_arrays() {
+        assert_eq!(add("", &any(".[]", eq(".", "2"))), ".[] | select(. == 2)");
+        let id = any(".[]", any(".orders[]", eq(".id", "2")));
+        assert_eq!(
+            add(".[] | select(any(.orders[]; .total == 9)) | .id", &id),
+            ".[] | select(any(.orders[]; .total == 9 and .id == 2)) | .id"
+        );
+        assert_eq!(add("", &id), ".[] | select(any(.orders[]; .id == 2))");
     }
 }

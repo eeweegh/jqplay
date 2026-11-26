@@ -1,5 +1,6 @@
 use crate::ansi::highlight_line;
 use crate::app::{App, Focus, MAX_VISIBLE_ROWS, Pane, SearchMode};
+use crate::editor::PROMPT_WIDTH;
 use crate::jq::Options;
 use crate::theme::Theme;
 use crate::util::to_u16;
@@ -61,10 +62,7 @@ fn draw_filter(frame: &mut Frame, app: &App, area: Rect) {
     let block = block("jq Filter", app.focus == Focus::Filter, app);
     let inner = block.inner(area);
     let (row, col) = app.editor.row_col();
-    let (voff, hoff) = (
-        (row + 1).saturating_sub(usize::from(inner.height)),
-        (col + 3).saturating_sub(usize::from(inner.width)),
-    );
+    let (voff, hoff) = app.editor.scroll(usize::from(inner.height), usize::from(inner.width));
     let lines: Vec<Line> = app
         .editor
         .text()
@@ -80,7 +78,7 @@ fn draw_filter(frame: &mut Frame, app: &App, area: Rect) {
         area,
     );
     if app.focus == Focus::Filter && app.prompt.is_none() {
-        let x = inner.x + to_u16(col + 2 - hoff.min(col + 2));
+        let x = inner.x + to_u16(col + PROMPT_WIDTH - hoff.min(col + PROMPT_WIDTH));
         let y = inner.y + to_u16(row - voff);
         frame.set_cursor_position(Position::new(
             x.min(inner.right().saturating_sub(1)),

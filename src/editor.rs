@@ -1,4 +1,7 @@
 // Multi-line editor with the readline (Emacs) subset used by the filter pane; cursor counts chars.
+// Columns in front of the text of a filter line in its pane (the "> " prompt or its blank continuation).
+pub const PROMPT_WIDTH: usize = 2;
+
 #[derive(Debug, Clone, Default)]
 pub struct LineEditor {
     text: String,
@@ -131,6 +134,21 @@ impl LineEditor {
     pub fn row_col(&self) -> (usize, usize) {
         let row = self.chars()[..self.cursor].iter().filter(|c| **c == '\n').count();
         (row, self.cursor - self.line_start())
+    }
+
+    // How far a viewport of `height` rows and `width` columns is scrolled (rows, columns) so that the cursor stays
+    // in view, with one column of slack after the text start `PROMPT_WIDTH` columns from the left edge.
+    pub fn scroll(&self, height: usize, width: usize) -> (usize, usize) {
+        let (row, col) = self.row_col();
+        ((row + 1).saturating_sub(height), (col + PROMPT_WIDTH + 1).saturating_sub(width))
+    }
+
+    // Puts the cursor on the character at `row` / `col`, clamped to the text.
+    pub fn set_row_col(&mut self, row: usize, col: usize) {
+        let lengths: Vec<usize> = self.text.split('\n').map(|line| line.chars().count()).collect();
+        let row = row.min(lengths.len() - 1);
+        let start: usize = lengths[..row].iter().map(|len| len + 1).sum();
+        self.cursor = start + col.min(lengths[row]);
     }
 
     pub fn on_first_line(&self) -> bool {
@@ -346,6 +364,33 @@ mod tests {
         assert!(!e.on_first_line() && !e.on_last_line());
         assert!(ed("x\ny", 0).on_first_line() && ed("x\ny", 3).on_last_line());
         assert_eq!(ed("", 0).line_count(), 1);
+    }
+
+    #[test]
+    fn set_row_col_clamps_to_the_text() {
+        let mut e = ed("ab\ncde\nf", 0);
+        e.set_row_col(1, 2);
+        assert_eq!(e.cursor(), 5);
+        e.set_row_col(1, 99);
+        assert_eq!(e.cursor(), 6, "past the end of a line stops at its end");
+        e.set_row_col(99, 0);
+        assert_eq!(e.cursor(), 7, "past the last line lands on the last line");
+        e.set_row_col(0, 0);
+        assert_eq!(e.cursor(), 0);
+        let mut e = ed("", 0);
+        e.set_row_col(3, 3);
+        assert_eq!(e.cursor(), 0);
+        let mut e = ed("\u{e9}\u{e9}x", 0);
+        e.set_row_col(0, 2);
+        assert_eq!(e.cursor(), 2, "columns are characters, not bytes");
+    }
+
+    #[test]
+    fn scroll_keeps_the_cursor_in_view() {
+        assert_eq!(ed("ab", 2).scroll(3, 20), (0, 0));
+        assert_eq!(ed("a\nb\nc\nd", 7).scroll(2, 20), (2, 0));
+        let long = "x".repeat(30);
+        assert_eq!(ed(&long, 30).scroll(1, 18), (0, 15));
     }
 
     #[test]

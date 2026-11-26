@@ -787,35 +787,96 @@ fn double_click_json_line(app: &mut jqplay::app::App, line: u16) {
     support::settle(app);
 }
 
-// Input pane lines of SAMPLE pretty-printed: 3 = users[0].name, 4 = age, 7 = users[1].name, 11 = count.
+// Input pane lines of SAMPLE pretty-printed: 3 = users[0].name, 4 = age, 7 = users[1].name, 8 = age, 11 = count.
 #[test]
-fn double_clicking_a_value_filters_on_it() {
+fn double_clicking_a_value_in_an_array_filters_on_it() {
     let mut app = app_with(Some(SAMPLE), &[]);
     render(&mut app, 100, 24);
     double_click_json_line(&mut app, 7);
-    assert_eq!(app.editor.text(), ".users[] | select(.name == \"bob\")");
+    assert_eq!(app.editor.text(), "select(any(.users[]; .name == \"bob\"))");
     assert_eq!(app.focus, Focus::Json);
-    let screen = render(&mut app, 100, 24);
-    assert!(screen.contains("\"age\": 27"), "{screen}");
-    // A second constraint is and-ed onto the select.
+    assert!(app.results_pane.doc.text().contains("\"users\""), "the record passes: some user is bob");
+    // A second constraint on the same array goes into the same any().
     double_click_json_line(&mut app, 8);
-    assert_eq!(app.editor.text(), ".users[] | select(.name == \"bob\" and .age == 27)");
+    assert_eq!(app.editor.text(), "select(any(.users[]; .name == \"bob\" and .age == 27))");
 }
 
 #[test]
-fn double_clicking_adds_a_select_stage_to_a_plain_query() {
+fn double_clicking_puts_the_select_in_front_of_a_plain_query() {
     let mut app = app_with(Some(SAMPLE), &["--filter", ".users[]"]);
     render(&mut app, 100, 24);
     double_click_json_line(&mut app, 4);
-    assert_eq!(app.editor.text(), ".users[] | select(.age == 31)");
+    assert_eq!(app.editor.text(), "select(any(.users[]; .age == 31)) | .users[]");
 }
 
 #[test]
-fn double_clicking_a_value_outside_an_array_has_no_prefix() {
+fn double_clicking_a_value_outside_an_array_uses_its_full_path() {
     let mut app = app_with(Some(SAMPLE), &[]);
     render(&mut app, 100, 24);
     double_click_json_line(&mut app, 11);
     assert_eq!(app.editor.text(), "select(.count == 2)");
+}
+
+const RECORDS: &str = concat!(
+    r#"{"name":"ann","age":31,"addr":{"city":"Gent"}}"#,
+    "\n",
+    r#"{"name":"bob","age":27,"addr":{"city":"Brugge"}}"#
+);
+
+// RECORDS pretty-printed: lines 0-6 are ann, 7-13 are bob (8 = name, 9 = age, 11 = city).
+#[test]
+fn double_clicking_filters_the_records_of_a_stream() {
+    let mut app = app_with(Some(RECORDS), &[]);
+    render(&mut app, 100, 24);
+    double_click_json_line(&mut app, 11);
+    assert_eq!(app.editor.text(), "select(.addr.city == \"Brugge\")");
+    let results = app.results_pane.doc.text().to_string();
+    assert!(results.contains("bob") && !results.contains("ann"), "{results}");
+}
+
+#[test]
+fn a_select_goes_in_front_of_whatever_the_query_does() {
+    let mut app = app_with(Some(RECORDS), &["--filter", ".name"]);
+    render(&mut app, 100, 24);
+    double_click_json_line(&mut app, 9);
+    assert_eq!(app.editor.text(), "select(.age == 27) | .name");
+    assert_eq!(app.results_pane.doc.text(), "\"bob\"");
+
+    let mut app = app_with(Some(RECORDS), &["--filter", ".name | select(. != \"x\")"]);
+    render(&mut app, 100, 24);
+    double_click_json_line(&mut app, 9);
+    assert_eq!(app.editor.text(), "select(.age == 27) | .name | select(. != \"x\")");
+}
+
+#[test]
+fn a_first_select_takes_the_extra_condition_as_an_and() {
+    let mut app = app_with(Some(RECORDS), &["--filter", "select(.addr.city == \"Brugge\") | .name"]);
+    render(&mut app, 100, 24);
+    double_click_json_line(&mut app, 9);
+    assert_eq!(app.editor.text(), "select(.addr.city == \"Brugge\" and .age == 27) | .name");
+    assert_eq!(app.results_pane.doc.text(), "\"bob\"");
+
+    let mut app = app_with(Some(RECORDS), &["--filter", "select(.name == \"x\" or .age > 1) | .name"]);
+    render(&mut app, 100, 24);
+    double_click_json_line(&mut app, 9);
+    assert_eq!(app.editor.text(), "select((.name == \"x\" or .age > 1) and .age == 27) | .name");
+}
+
+#[test]
+fn two_clicks_in_one_array_of_a_record_must_hold_for_the_same_element() {
+    let record = r#"{"id":1,"orders":[{"id":1,"total":5},{"id":2,"total":9}]}"#;
+    let mut app = app_with(Some(record), &[]);
+    render(&mut app, 100, 24);
+    // Pretty lines: 8 = orders[1].id, 9 = orders[1].total.
+    double_click_json_line(&mut app, 9);
+    assert_eq!(app.editor.text(), "select(any(.orders[]; .total == 9))");
+    double_click_json_line(&mut app, 8);
+    assert_eq!(app.editor.text(), "select(any(.orders[]; .total == 9 and .id == 2))");
+    assert!(app.results_pane.doc.text().contains("\"orders\""));
+    // orders[0].id is 1: no single element has total 9, id 2 and id 1, so nothing passes.
+    double_click_json_line(&mut app, 4);
+    assert_eq!(app.editor.text(), "select(any(.orders[]; .total == 9 and .id == 2 and .id == 1))");
+    assert_eq!(app.results_pane.doc.text(), "");
 }
 
 #[test]
@@ -905,4 +966,96 @@ fn double_clicking_leaves_the_status_message_alone() {
     render(&mut app, 100, 24);
     double_click_json_line(&mut app, 7);
     assert_eq!(app.status_message, "");
+}
+
+// Left-clicks the filter pane's text area, `col` columns and `row` rows from its top left (inside the border).
+fn click_filter(app: &mut jqplay::app::App, col: u16, row: u16) {
+    let (x, y) = (app.rects.filter.x + 1 + col, app.rects.filter.y + 1 + row);
+    mouse(app, MouseEventKind::Down(MouseButton::Left), x, y);
+    mouse(app, MouseEventKind::Up(MouseButton::Left), x, y);
+}
+
+#[test]
+fn clicking_the_filter_text_puts_the_cursor_there_and_focuses_the_pane() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".users[].name"]);
+    focus_next(&mut app);
+    render(&mut app, 80, 20);
+    assert_eq!(app.focus, Focus::Json);
+    // Two columns of "> " in front of the text.
+    click_filter(&mut app, 2 + 3, 0);
+    assert_eq!(app.focus, Focus::Filter);
+    assert_eq!(app.editor.cursor(), 3);
+    type_text(&mut app, "X");
+    assert_eq!(app.editor.text(), ".usXers[].name");
+}
+
+#[test]
+fn clicks_left_of_the_text_or_past_its_end_clamp() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".count"]);
+    render(&mut app, 80, 20);
+    click_filter(&mut app, 0, 0);
+    assert_eq!(app.editor.cursor(), 0);
+    click_filter(&mut app, 60, 0);
+    assert_eq!(app.editor.cursor(), 6);
+    // Below the last line stays on the last line.
+    click_filter(&mut app, 4, 0);
+    assert_eq!(app.editor.cursor(), 2);
+}
+
+#[test]
+fn clicking_a_line_of_a_multi_line_filter() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".users\n| .name"]);
+    render(&mut app, 80, 20);
+    click_filter(&mut app, 2 + 3, 1);
+    assert_eq!(app.editor.cursor(), ".users\n".chars().count() + 3);
+    click_filter(&mut app, 2 + 1, 0);
+    assert_eq!(app.editor.cursor(), 1);
+}
+
+#[test]
+fn clicking_a_horizontally_scrolled_filter_maps_to_the_visible_column() {
+    let long = format!(".{}", "a".repeat(40));
+    let mut app = app_with(Some(SAMPLE), &["--filter", &long]);
+    // 20 columns wide: 18 inside the border. The cursor at the end (41) scrolls the text by 41 + 3 - 18 = 26,
+    // so the fifth text cell shows character 26 + 4 - 2 (the "> " prompt scrolled out of view as well).
+    render(&mut app, 20, 20);
+    click_filter(&mut app, 4, 0);
+    assert_eq!(app.editor.cursor(), 26 + 4 - 2);
+}
+
+#[test]
+fn clicking_the_filter_border_only_focuses_and_closes_the_completion_popup() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".us"]);
+    render(&mut app, 80, 20);
+    type_text(&mut app, "e");
+    assert!(app.completion.open);
+    let before = app.editor.cursor();
+    let (x, y) = (app.rects.filter.x + 3, app.rects.filter.y);
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), x, y);
+    assert_eq!(app.editor.cursor(), before);
+    assert!(!app.completion.open);
+}
+
+// RECORDS slurped (or a plain array) pretty-printed: lines 1-7 are ann, 8-14 are bob (10 = age, 12 = city).
+#[test]
+fn the_elements_of_a_slurped_stream_are_filtered_like_records() {
+    let mut app = app_with(Some(RECORDS), &["--slurp"]);
+    render(&mut app, 100, 24);
+    double_click_json_line(&mut app, 10);
+    assert_eq!(app.editor.text(), ".[] | select(.age == 27)");
+    let results = app.results_pane.doc.text().to_string();
+    assert!(results.contains("bob") && !results.contains("ann"), "{results}");
+}
+
+#[test]
+fn a_leading_iteration_of_the_query_is_kept_for_a_root_array() {
+    let array = r#"[{"name":"ann","age":31,"addr":{"city":"Gent"}},{"name":"bob","age":27,"addr":{"city":"Brugge"}}]"#;
+    let mut app = app_with(Some(array), &["--filter", ".[] | .name"]);
+    render(&mut app, 100, 24);
+    double_click_json_line(&mut app, 10);
+    assert_eq!(app.editor.text(), ".[] | select(.age == 27) | .name");
+    assert_eq!(app.results_pane.doc.text(), "\"bob\"");
+    double_click_json_line(&mut app, 12);
+    assert_eq!(app.editor.text(), ".[] | select(.age == 27 and .addr.city == \"Brugge\") | .name");
+    assert_eq!(app.results_pane.doc.text(), "\"bob\"");
 }

@@ -16,9 +16,11 @@ Layout:
   |     JSON Input (left)        |      Result (right)       |
   +------------------------------+---------------------------+
   Each pane scrolls independently (arrows, PageUp/PageDown or b/Space, Home/End,
-  mouse wheel, dragging the scrollbar). In JSON Input and Result, / starts an incremental search of that pane (smart-case; Enter
+  mouse wheel, dragging the scrollbar). Clicking a pane focuses it; clicking in the filter text also puts the cursor there. In JSON Input and Result, / starts an incremental search of that pane (smart-case; Enter
   keeps it, n / N jump to the next / previous match, Esc ends it). They are view-only (except that double-clicking a value in
-  JSON Input adds `select(<key> == <value>)` to the filter, and-ed onto a trailing select); load JSON via a file argument,
+  JSON Input adds `select(<full key path> == <value>)` at the front of the filter, or as an extra `and` in a
+  select that is already first; inside arrays `any(.items[]; ...)` is used; for an array input or slurp the
+  elements are the records and the filter starts with `.[] | select(...)`); load JSON via a file argument,
   stdin, or Ctrl+F. On accepting (q in the JSON/Result panes, Ctrl+Q anywhere) the current filter is printed to
   stdout as: jq '<filter>'
   Empty input (empty or whitespace-only stdin or file) exits at once, silently, with status 0.

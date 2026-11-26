@@ -1,5 +1,6 @@
 use super::pick::{add_constraint, pick};
 use super::{App, Focus};
+use crate::editor::PROMPT_WIDTH;
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
 use std::time::{Duration, Instant};
@@ -38,6 +39,22 @@ impl App {
             Some(Focus::Results) => self.results_pane.scroll_to_bar_row(row),
             _ => {}
         }
+    }
+
+    // A click in the filter text puts the cursor there (the pane scrolls to keep the cursor in view, which
+    // is undone here the same way the drawing does it).
+    fn click_filter(&mut self, at: Position) {
+        self.completion.close();
+        let area = self.rects.filter;
+        let inner =
+            Rect::new(area.x + 1, area.y + 1, area.width.saturating_sub(2), area.height.saturating_sub(2));
+        if !inner.contains(at) {
+            return;
+        }
+        let (top, left) = self.editor.scroll(usize::from(inner.height), usize::from(inner.width));
+        let row = top + usize::from(at.y - inner.y);
+        let col = (left + usize::from(at.x - inner.x)).saturating_sub(PROMPT_WIDTH);
+        self.editor.set_row_col(row, col);
     }
 
     // A double-click on a scalar of the input pane adds "that key has that value" to the query.
@@ -105,8 +122,10 @@ impl App {
                 if f != self.focus {
                     self.set_focus(f);
                 }
-                if f == Focus::Json {
-                    self.click_input_pane(at);
+                match f {
+                    Focus::Filter => self.click_filter(at),
+                    Focus::Json => self.click_input_pane(at),
+                    Focus::Results => {}
                 }
             }
             (MouseEventKind::ScrollUp | MouseEventKind::ScrollDown, Some(f)) => {
