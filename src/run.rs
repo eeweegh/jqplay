@@ -47,6 +47,9 @@ pub fn event_loop(app: &mut App, mouse: bool) -> std::io::Result<Outcome> {
             Err(RecvTimeoutError::Disconnected) => return Ok(Outcome::Abort),
         }
         app.tick(Instant::now());
+        if let Some(text) = app.take_clipboard() {
+            Tui::copy_to_clipboard(&text);
+        }
         if app.take_suspend() {
             tui.suspend()?;
         }

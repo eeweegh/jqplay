@@ -1,3 +1,4 @@
+use crate::util::base64;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -6,7 +7,7 @@ use ratatui::crossterm::event::{
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{EnterAlternateScreen, enable_raw_mode};
 use ratatui::layout::Rect;
-use std::io::stdout;
+use std::io::{Write, stdout};
 
 // Owns the terminal modes; raw mode already clears IXON, so Ctrl+Q/Ctrl+S reach the app.
 #[derive(Debug)]
@@ -59,6 +60,13 @@ impl Tui {
             previous(info);
         }));
         Ok(Self { terminal, mouse, kitty })
+    }
+
+    // Puts `text` on the system clipboard with an OSC 52 sequence; terminals that don't allow it ignore it.
+    pub fn copy_to_clipboard(text: &str) {
+        let mut out = stdout();
+        let _ = write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes()));
+        let _ = out.flush();
     }
 
     // Like the tty driver's Ctrl+Z: hand the terminal back, stop the whole foreground process group, and

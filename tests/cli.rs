@@ -16,7 +16,15 @@ fn version_includes_package_version() {
 fn help_documents_keybindings() {
     let out = jqplay().arg("--help").output().unwrap();
     let text = String::from_utf8(out.stdout).unwrap();
-    for needle in ["--filter", "--theme", "--history-file", "Ctrl+Q", "Readline editing", "solarized-dark"] {
+    for needle in [
+        "Selection (filter pane only)",
+        "--filter",
+        "--theme",
+        "--history-file",
+        "Ctrl+Q",
+        "Readline editing",
+        "solarized-dark",
+    ] {
         assert!(text.contains(needle), "missing {needle}");
     }
 }

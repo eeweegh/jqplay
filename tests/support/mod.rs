@@ -62,6 +62,12 @@ pub fn render(app: &mut App, width: u16, height: u16) -> String {
     terminal.backend().to_string()
 }
 
+pub fn render_buffer(app: &mut App, width: u16, height: u16) -> ratatui::buffer::Buffer {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal.draw(|f| jqplay::ui::draw(f, app)).unwrap();
+    terminal.backend().buffer().clone()
+}
+
 // The style of the first letter of `word` on the bottom (status) row of a freshly drawn screen.
 pub fn status_style(app: &mut App, width: u16, height: u16, word: &str) -> ratatui::style::Style {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();

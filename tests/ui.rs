@@ -1059,3 +1059,142 @@ fn a_leading_iteration_of_the_query_is_kept_for_a_root_array() {
     assert_eq!(app.editor.text(), ".[] | select(.age == 27 and .addr.city == \"Brugge\") | .name");
     assert_eq!(app.results_pane.doc.text(), "\"bob\"");
 }
+
+// Filter text starts at column 3 (border + "> ") and row 1 of the screen.
+fn drag_in_filter(app: &mut jqplay::app::App, from: u16, to: u16) {
+    mouse(app, MouseEventKind::Down(MouseButton::Left), from, 1);
+    mouse(app, MouseEventKind::Drag(MouseButton::Left), to, 1);
+    mouse(app, MouseEventKind::Up(MouseButton::Left), to, 1);
+}
+
+#[test]
+fn dragging_in_the_filter_selects_and_copies_on_release() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".users | length"]);
+    render(&mut app, 80, 12);
+    drag_in_filter(&mut app, 3, 9);
+    assert_eq!(app.editor.selection(), Some((0, 6)));
+    assert_eq!(app.take_clipboard().as_deref(), Some(".users"));
+    assert_eq!(app.take_clipboard(), None, "the clipboard text is handed out once");
+    // Dragging to the right of the text and the other way round both stay inside it.
+    drag_in_filter(&mut app, 70, 3);
+    assert_eq!(app.take_clipboard().as_deref(), Some(".users | length"));
+}
+
+#[test]
+fn a_plain_click_places_the_cursor_without_copying() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".users | length"]);
+    render(&mut app, 80, 12);
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), 6, 1);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), 6, 1);
+    assert_eq!((app.editor.cursor(), app.editor.selection()), (3, None));
+    assert_eq!(app.take_clipboard(), None);
+}
+
+#[test]
+fn ctrl_x_cuts_and_alt_w_copies_the_selection() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".users | length"]);
+    render(&mut app, 80, 12);
+    drag_in_filter(&mut app, 3, 11);
+    app.take_clipboard();
+    press(&mut app, KeyCode::Char('w'), KeyModifiers::ALT);
+    assert_eq!(app.take_clipboard().as_deref(), Some(".users |"));
+    assert_eq!(app.editor.text(), ".users | length");
+    ctrl(&mut app, 'x');
+    assert_eq!(app.take_clipboard().as_deref(), Some(".users |"));
+    assert_eq!(app.editor.text(), " length");
+    ctrl(&mut app, 'x');
+    assert_eq!(app.take_clipboard(), None, "nothing selected, nothing cut");
+    ctrl(&mut app, 'y');
+    assert_eq!(app.editor.text(), ".users | length", "the cut text is the last kill");
+}
+
+#[test]
+fn typing_over_a_selection_replaces_it_and_esc_drops_it() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".users | length"]);
+    render(&mut app, 80, 12);
+    drag_in_filter(&mut app, 3, 9);
+    type_text(&mut app, ".count");
+    assert_eq!(app.editor.text(), ".count | length");
+    drag_in_filter(&mut app, 3, 9);
+    press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert_eq!((app.editor.text(), app.editor.selection()), (".count | length", None));
+}
+
+#[test]
+fn the_selection_is_highlighted_in_the_filter() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".users | length"]);
+    render(&mut app, 80, 12);
+    drag_in_filter(&mut app, 3, 9);
+    let buffer = support::render_buffer(&mut app, 80, 12);
+    let selected = app.theme.selected;
+    let styled: String = (3..9).map(|x| buffer[(x, 1)].symbol().to_string()).collect();
+    assert_eq!(styled, ".users");
+    assert!((3..9).all(|x| buffer[(x, 1)].style().bg == selected.bg));
+    assert!(buffer[(10, 1)].style().bg != selected.bg);
+}
+
+#[test]
+fn double_click_in_the_filter_selects_and_copies_the_word() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".users | length"]);
+    render(&mut app, 80, 12);
+    for _ in 0..2 {
+        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), 6, 1);
+        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), 6, 1);
+    }
+    assert_eq!(app.editor.selection(), Some((1, 6)));
+    assert_eq!(app.take_clipboard().as_deref(), Some("users"));
+    // A third quick click takes the whole line, a fourth starts over as a plain click.
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), 6, 1);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), 6, 1);
+    assert_eq!(app.take_clipboard().as_deref(), Some(".users | length"));
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), 6, 1);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), 6, 1);
+    assert_eq!((app.editor.selection(), app.take_clipboard()), (None, None));
+}
+
+#[test]
+fn triple_click_drag_extends_the_selection_by_lines() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".users\n| length\n| . + 1"]);
+    render(&mut app, 80, 12);
+    for _ in 0..2 {
+        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), 6, 2);
+        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), 6, 2);
+    }
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), 6, 2);
+    assert_eq!(app.editor.selected_text().as_deref(), Some("| length"));
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), 4, 3);
+    assert_eq!(app.editor.selected_text().as_deref(), Some("| length\n| . + 1"));
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), 4, 1);
+    assert_eq!(app.editor.selected_text().as_deref(), Some(".users\n| length"));
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), 4, 1);
+}
+
+#[test]
+fn clicks_apart_in_the_filter_are_not_a_double_click() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".users | length"]);
+    render(&mut app, 80, 12);
+    for column in [6, 14] {
+        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), column, 1);
+        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), column, 1);
+    }
+    assert_eq!(app.editor.selection(), None);
+    assert_eq!(app.take_clipboard(), None);
+}
+
+#[test]
+fn double_click_drag_extends_the_selection_by_words() {
+    let mut app = app_with(Some(SAMPLE), &["--filter", ".users | length"]);
+    render(&mut app, 80, 12);
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), 6, 1);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), 6, 1);
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), 6, 1);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), 14, 1);
+    assert_eq!(app.editor.selected_text().as_deref(), Some("users | length"));
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), 3, 1);
+    assert_eq!(app.editor.selected_text().as_deref(), Some(".users"));
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), 3, 1);
+    assert_eq!(app.take_clipboard().as_deref(), Some(".users"));
+    // A later plain drag is character-wise again.
+    drag_in_filter(&mut app, 4, 6);
+    assert_eq!(app.editor.selected_text().as_deref(), Some("us"));
+}

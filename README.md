@@ -22,6 +22,7 @@ Or build from source: `just install`.
 
 `jqplay --help` lists every key binding. `q` (JSON/Result panes) or Ctrl+Q (anywhere) accepts and prints `jq '<filter>'`; Ctrl+C aborts. Empty input (empty stdin or file) exits silently with status 0. When stdout is not a terminal (e.g. `cat data.json | jqplay | less`), jqplay shows no UI and copies its input to stdout unchanged.
 The filter pane is multi-line: Enter (also Alt+Enter, Ctrl+J) adds a line and the pane grows with it.
+Double-clicking a word in the filter selects it, triple-clicking selects the line (dragging after either extends by words or lines), and dragging the mouse selects any stretch of text and copies it to the system clipboard on release (OSC 52, so it also works over SSH; in tmux set `set-clipboard on`). Ctrl+X cuts the selection, Alt+W (or Ctrl+Insert) copies it; paste with your terminal's paste shortcut.
 
 ## Layout of the code
 

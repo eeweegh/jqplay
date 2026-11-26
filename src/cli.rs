@@ -57,6 +57,16 @@ Readline editing (filter pane only; overrides Ctrl+Y save there; use Ctrl+S):
   Ctrl+W            kill previous word       Ctrl+Y   yank last kill
   Ctrl+T            transpose two characters
 
+Selection (filter pane only):
+  Double-click      select the word under the pointer, triple-click the line (and copy it);
+                    dragging after either extends the selection by whole words / lines
+  Drag the mouse    select text; on release it is copied to the system clipboard (OSC 52,
+                    so it also works over SSH; in tmux set `set-clipboard on`)
+  Ctrl+X            cut the selection (to the clipboard; Ctrl+Y brings it back)
+  Alt+W / Ctrl+Ins  copy the selection (Ctrl+C aborts, so it cannot copy)
+  Typing, Backspace or Delete replaces/removes the selection; Esc or any cursor key drops it.
+  Paste into the filter with your terminal's paste shortcut (Ctrl+Shift+V, Cmd+V, middle-click).
+
 Config file (TOML, optional): ~/.config/jqplay/config.toml with keys theme,
 raw, compact, sort_keys, slurp, color, history_file, mouse, autocomplete, autopair (auto-close\nbrackets and quotes in the filter line, default true) and timeout_secs (stop a jq run after this many\nseconds, default 60, 0 = never). Flags override it.
 

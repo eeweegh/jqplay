@@ -131,6 +131,33 @@ impl App {
         std::mem::take(&mut self.suspend)
     }
 
+    // Text the event loop should put on the system clipboard (once).
+    pub fn take_clipboard(&mut self) -> Option<String> {
+        self.clipboard.take()
+    }
+
+    // Ctrl+X cuts the selection, Alt+W / Ctrl+Insert copy it (Ctrl+C is taken: it aborts).
+    fn clipboard_key(&mut self, key: &KeyEvent) -> bool {
+        let cut = ctrl_char(key) == Some('x');
+        let copy = (key.code == KeyCode::Char('w')
+            && key.modifiers.contains(KeyModifiers::ALT)
+            && !key.modifiers.contains(KeyModifiers::CONTROL))
+            || (key.code == KeyCode::Insert && key.modifiers.contains(KeyModifiers::CONTROL));
+        if !cut && !copy {
+            return false;
+        }
+        if cut {
+            if let Some(text) = self.editor.cut_selection() {
+                self.clipboard = Some(text);
+                self.completion.close();
+                self.on_filter_change();
+            }
+        } else if let Some(text) = self.editor.selected_text() {
+            self.clipboard = Some(text);
+        }
+        true
+    }
+
     pub(super) fn on_key(&mut self, key: &KeyEvent) {
         if ctrl_char(key) == Some('z') {
             self.suspend = true;
@@ -185,6 +212,9 @@ impl App {
             self.editor.insert_newline();
             self.completion.close();
             self.on_filter_change();
+            return true;
+        }
+        if self.clipboard_key(key) {
             return true;
         }
         match key.code {
@@ -275,6 +305,7 @@ impl App {
             }
             KeyCode::Esc => {
                 self.completion.close();
+                self.editor.clear_selection();
                 self.status_message.clear();
             }
             _ => {}

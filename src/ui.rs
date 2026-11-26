@@ -63,6 +63,8 @@ fn draw_filter(frame: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     let (row, col) = app.editor.row_col();
     let (voff, hoff) = app.editor.scroll(usize::from(inner.height), usize::from(inner.width));
+    let selection = app.editor.selection();
+    let mut start = 0;
     let lines: Vec<Line> = app
         .editor
         .text()
@@ -70,7 +72,19 @@ fn draw_filter(frame: &mut Frame, app: &App, area: Rect) {
         .enumerate()
         .map(|(i, text)| {
             let prefix = if i == 0 { Span::styled("> ", app.theme.border_focus) } else { Span::raw("  ") };
-            Line::from(vec![prefix, Span::raw(text.to_string())])
+            let len = text.chars().count();
+            let line = Line::from(
+                std::iter::once(prefix)
+                    .chain(selected_spans(
+                        text,
+                        selection.map(|(a, b)| (a.saturating_sub(start), b.saturating_sub(start))),
+                        len,
+                        app.theme.selected,
+                    ))
+                    .collect::<Vec<_>>(),
+            );
+            start += len + 1;
+            line
         })
         .collect();
     frame.render_widget(
@@ -85,6 +99,21 @@ fn draw_filter(frame: &mut Frame, app: &App, area: Rect) {
             y.min(inner.bottom().saturating_sub(1)),
         ));
     }
+}
+
+// The text of one filter line as spans, with the chars in `selection` (relative to the line) highlighted.
+fn selected_spans(
+    text: &str,
+    selection: Option<(usize, usize)>,
+    len: usize,
+    style: Style,
+) -> Vec<Span<'static>> {
+    let Some((a, b)) = selection.map(|(a, b)| (a.min(len), b.min(len))).filter(|(a, b)| a < b) else {
+        return vec![Span::raw(text.to_string())];
+    };
+    let chars: Vec<char> = text.chars().collect();
+    let part = |range: std::ops::Range<usize>| chars[range].iter().collect::<String>();
+    vec![Span::raw(part(0..a)), Span::styled(part(a..b), style), Span::raw(part(b..len))]
 }
 
 // Shows the query and hit counter in the bottom border while a search is active.

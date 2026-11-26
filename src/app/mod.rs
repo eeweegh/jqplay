@@ -9,7 +9,7 @@ mod save;
 
 use crate::completion::{self, Completion};
 use crate::config::Settings;
-use crate::editor::LineEditor;
+use crate::editor::{LineEditor, Unit};
 use crate::history::FilterHistory;
 use crate::job::JobKind;
 use crate::job::{Job, Reply};
@@ -85,6 +85,12 @@ pub struct App {
     pub split_pct: u16,
     suspend: bool,
     dragging: bool,
+    selecting: bool,
+    // The word or line a double or triple click started on while its drag extends the selection by whole ones.
+    unit_origin: Option<(Unit, (usize, usize))>,
+    // Time, place and count of the last click in the filter, for double and triple clicks.
+    filter_clicks: Option<(Instant, Position, u8)>,
+    clipboard: Option<String>,
     dragging_bar: Option<Focus>,
     last_click: Option<(Instant, Position)>,
     history: FilterHistory,
@@ -139,6 +145,10 @@ impl App {
             split_pct: 50,
             suspend: false,
             dragging: false,
+            selecting: false,
+            unit_origin: None,
+            filter_clicks: None,
+            clipboard: None,
             dragging_bar: None,
             last_click: None,
             history,

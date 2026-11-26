@@ -1,6 +1,6 @@
 use super::pick::{add_constraint, pick};
 use super::{App, Focus};
-use crate::editor::PROMPT_WIDTH;
+use crate::editor::{PROMPT_WIDTH, Unit};
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
 use std::time::{Duration, Instant};
@@ -41,20 +41,53 @@ impl App {
         }
     }
 
-    // A click in the filter text puts the cursor there (the pane scrolls to keep the cursor in view, which
-    // is undone here the same way the drawing does it).
-    fn click_filter(&mut self, at: Position) {
-        self.completion.close();
+    // The (row, column) of the filter text under `at` (the pane scrolls to keep the cursor in view, which is
+    // undone here the same way the drawing does it). Outside the text it is None, or with `clamp` the nearest
+    // position inside.
+    fn filter_pos(&self, at: Position, clamp: bool) -> Option<(usize, usize)> {
         let area = self.rects.filter;
         let inner =
             Rect::new(area.x + 1, area.y + 1, area.width.saturating_sub(2), area.height.saturating_sub(2));
-        if !inner.contains(at) {
-            return;
+        if inner.is_empty() || !(clamp || inner.contains(at)) {
+            return None;
         }
+        let x = at.x.clamp(inner.x, inner.right() - 1);
+        let y = at.y.clamp(inner.y, inner.bottom() - 1);
         let (top, left) = self.editor.scroll(usize::from(inner.height), usize::from(inner.width));
-        let row = top + usize::from(at.y - inner.y);
-        let col = (left + usize::from(at.x - inner.x)).saturating_sub(PROMPT_WIDTH);
+        let row = top + usize::from(y - inner.y);
+        let col = (left + usize::from(x - inner.x)).saturating_sub(PROMPT_WIDTH);
+        Some((row, col))
+    }
+
+    // A click in the filter text puts the cursor there and starts a selection that a drag extends; a double-click
+    // on the same spot selects the word and a triple-click the line, and dragging then extends by whole ones.
+    fn click_filter(&mut self, at: Position) {
+        self.completion.close();
+        let Some((row, col)) = self.filter_pos(at, false) else { return };
+        let now = Instant::now();
+        let clicks = match self.filter_clicks {
+            Some((t, p, n))
+                if p.y == at.y && p.x.abs_diff(at.x) <= 1 && now.duration_since(t) <= DOUBLE_CLICK =>
+            {
+                n % 3 + 1
+            }
+            _ => 1,
+        };
+        self.filter_clicks = Some((now, at, clicks));
         self.editor.set_row_col(row, col);
+        let unit = match clicks {
+            1 => None,
+            2 => Some(Unit::Word),
+            _ => Some(Unit::Line),
+        };
+        match unit {
+            Some(unit) => {
+                self.editor.select_unit(unit);
+                self.unit_origin = self.editor.selection().map(|range| (unit, range));
+            }
+            None => self.editor.start_selection(),
+        }
+        self.selecting = true;
     }
 
     // A double-click on a scalar of the input pane adds "that key has that value" to the query.
@@ -112,11 +145,25 @@ impl App {
             (MouseEventKind::Drag(MouseButton::Left), _) if self.dragging_bar.is_some() => {
                 self.drag_bar(at.y);
             }
+            (MouseEventKind::Drag(MouseButton::Left), _) if self.selecting => {
+                if let Some((row, col)) = self.filter_pos(at, true) {
+                    match self.unit_origin {
+                        Some((unit, origin)) => self.editor.extend_units_to_row_col(row, col, origin, unit),
+                        None => self.editor.extend_to_row_col(row, col),
+                    }
+                }
+            }
             (MouseEventKind::Down(MouseButton::Left), _) if self.on_divider(at) => self.dragging = true,
             (MouseEventKind::Drag(MouseButton::Left), _) if self.dragging => self.drag_divider(at.x),
             (MouseEventKind::Up(MouseButton::Left), _) => {
                 self.dragging = false;
                 self.dragging_bar = None;
+                self.unit_origin = None;
+                if std::mem::take(&mut self.selecting)
+                    && let Some(text) = self.editor.selected_text()
+                {
+                    self.clipboard = Some(text);
+                }
             }
             (MouseEventKind::Down(MouseButton::Left), Some(f)) => {
                 if f != self.focus {
